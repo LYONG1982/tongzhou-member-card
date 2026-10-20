@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src blob: data:; connect-src 'none'; font-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>同舟婚恋 · 会员卡片生成器</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="styles.css">
+  <script src="assets/backgrounds.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="masthead"><div><span class="brand">同舟婚恋</span><span class="brand-line">真心为爱，尽心为家</span></div><span class="offline"><i></i> 资料仅在本机处理</span></header>
+  <main>
+    <div class="page-heading"><div><p class="eyebrow">让每一份真诚，被温柔以待</p><h1>制作一张相遇的名片</h1><p>填写资料，调整照片，直接生成高清卡片。</p></div><span class="size-label">1440 × 1080 <small>横版 PNG</small></span></div>
+    <form id="cardForm" novalidate>
+      <section class="panel"><div class="section-heading"><span class="step">01</span><h2>基本资料</h2><span id="themeLabel" class="theme-label">他的资料 · 蓝色</span></div>
+        <fieldset class="gender-choice"><legend>卡片风格</legend><label><input type="radio" name="gender" value="男" checked> 他的资料 · 蓝色</label><label><input type="radio" name="gender" value="女"> 她的资料 · 粉色</label></fieldset>
+        <div class="fields">
+          <label class="field"><span>姓名 <span class="required">必填</span></span><input id="memberName" type="text" autocomplete="off" required placeholder="请输入会员姓名"><span class="hint">仅录入使用，图片和文件名不显示</span></label>
+          <label class="field">出生年份<select id="birth" required aria-label="出生年份"></select><span class="hint">只选择年份，无需填写月份</span></label>
+          <label class="field">年龄<input id="age" readonly aria-describedby="ageNote"><span id="ageNote" class="hint">按年份估算，不代表精确周岁</span></label>
+          <label class="field">民族<input id="ethnic" value="汉族" autocomplete="off"></label>
+          <label class="field">婚姻状况<select id="marital"><option>离异</option><option>未婚</option><option>丧偶</option></select></label>
+          <label class="field">身高（cm）<input id="height" type="number" min="100" max="230" step="1" value="178" required></label>
+          <label class="field">学历<select id="edu"><option>本科</option><option>大专</option><option>硕士</option><option>博士</option><option>高中</option><option>中专</option><option>初中及以下</option><option>其他</option></select><input id="eduOther" aria-label="其他学历" placeholder="请填写学历" hidden></label>
+          <label class="field">工作<input id="job" value="公务员" autocomplete="off"></label>
+          <label class="field">月收入<input id="income" value="10000+" autocomplete="off"></label>
+          <label class="field">资产<input id="assets" value="全款房车" autocomplete="off"></label>
+        </div>
+        <div class="number-panel"><div><span class="hint">会员编号 · 自动分配</span><p id="numberStatus" role="status">正在读取编号…</p><p class="hint">同一份资料重复生成沿用原号；制作下一位请点“重置”。</p></div>
+          <details><summary>设置起始序号</summary><label class="field">下一份资料的起始序号<input id="startNumber" type="number" min="1" max="9999" step="1" value="1"></label><button id="saveNumber" type="button" class="secondary">保存起始序号</button><p id="numberMessage" class="hint" aria-live="polite">编号仅在当前网址、当前浏览器中保存。从离线版迁移时，请设置为已用最大编号加一。</p></details></div>
+      </section>
+      <section class="panel"><div class="section-heading"><span class="step">02</span><h2>关于这份相遇</h2></div>
+        <label class="field prose">家庭情况<textarea id="family" rows="3">父亲身体健康，兄妹三人，关系和睦。女儿由对方抚养，目前正在上大学。</textarea><span id="familyCount" class="counter">已输入 0/100</span></label>
+        <div class="prose-grid">
+          <label class="field prose">红娘评价<textarea id="review" rows="5">成熟稳重，待人真诚，工作认真负责，生活自律。性格温和，情绪稳定，有责任感和家庭观念，懂得包容和理解。事业稳定，对未来的生活有清晰的规划，是值得信赖和托付的好伴侣。</textarea><span id="reviewCount" class="counter">已输入 0/100</span></label>
+          <label class="field prose">择偶要求<textarea id="match" rows="5">希望对方性格温柔善良，情绪稳定，重视家庭，有一定的生活品味。愿意彼此真诚相待，相互理解包容，一起经营温暖、踏实的家庭生活。</textarea><span id="matchCount" class="counter">已输入 0/100</span></label>
+        </div><p class="hint">以上为可替换的示例文字。每段最多 100 个字符，内容超出可读排版空间时会提示修改。</p>
+      </section>
+      <section class="panel"><div class="section-heading"><span class="step">03</span><h2>会员照片</h2></div>
+        <div class="photo-layout"><div>
+          <div class="field"><span>会员照片 <span class="required">必填</span></span><input id="photo" type="file" hidden accept="image/*,.jpg,.jpeg,.png,.webp,.gif,.bmp,.avif,.heic,.heif,.tif,.tiff"><button id="uploadPhoto" type="button" class="primary upload-button">上传照片</button><span id="photoFilename" class="hint">尚未选择照片</span><span class="hint">JPG、PNG、WebP、GIF 首帧；其他格式以浏览器解码能力为准。最大 20MB，建议长边至少 1600 像素。</span></div>
+          <p id="photoMessage" class="message" aria-live="polite">请选择会员照片。</p>
+          <label class="field zoom-label">照片缩放 <output id="zoomValue" for="zoom">100%</output><input id="zoom" type="range" min="100" max="300" value="100" disabled></label>
+          <div class="minor-actions"><button id="centerPhoto" type="button" class="secondary" disabled>居中</button><button id="resetPhoto" type="button" class="secondary" disabled>重置构图</button></div>
+        </div><div class="crop-column"><p class="crop-title">照片构图 <span>拖动调整位置</span></p><div class="crop-stage"><canvas id="crop" width="568" height="404" tabindex="0" role="img" aria-label="照片构图调整区，拖动或使用方向键移动照片">请使用支持 Canvas 的浏览器。</canvas><span id="cropPlaceholder">上传照片后调整构图</span></div><p class="hint">方向键微调，Shift + 方向键快速移动。此区域与成品照片框比例一致，请将脸部和肩部放入框内。</p></div></div>
+      </section>
+      <div class="action-bar"><div><p id="status" role="status" aria-live="polite">资料填写完成后，即可生成下载。</p><p class="hint">请确认照片与资料已获得会员使用授权。</p></div><div class="actions"><button type="button" id="reset" class="secondary">重置</button><button id="generate" type="submit" class="primary">生成并下载 PNG</button></div></div>
+    </form>
+    <footer>同舟相伴，遇见更好的幸福。</footer>
+  </main>
+</body>
+</html>
