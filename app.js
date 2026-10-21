@@ -4,7 +4,7 @@
   const W = 1440, H = 1080;
   const LAYOUT = Object.freeze({
     info: { x: 32, y: 216, w: 788, h: 404 },
-    photo: { x: 840, y: 216, w: 568, h: 404 },
+    photo: { x: 856, y: 217, w: 536, h: 402 },
     family: { x: 62, y: 499, w: 728, h: 116 },
     review: { x: 32, y: 632, w: 676, h: 192 },
     match: { x: 724, y: 632, w: 684, h: 192 }
@@ -16,7 +16,9 @@
   const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d');
   const crop = $('crop'), cropCtx = crop.getContext('2d');
-  ctx.imageSmoothingQuality = 'high'; cropCtx.imageSmoothingQuality = 'high';
+  const photoLayer = document.createElement('canvas'); photoLayer.width = PW; photoLayer.height = PH;
+  const photoCtx = photoLayer.getContext('2d');
+  ctx.imageSmoothingQuality = 'high'; cropCtx.imageSmoothingQuality = 'high'; photoCtx.imageSmoothingQuality = 'high';
   const TEMPLATES = Object.freeze({
     男: { key: 'male', accent: '#0759a6', deep: '#073b70', pale: '#f0f7ff', soft: '#d8eafa', mid: '#74a9de', title: '他的资料', panel: '#ffffffed' },
     女: { key: 'female', accent: '#b24672', deep: '#71304d', pale: '#fff2f7', soft: '#f7dfE9', mid: '#d985a6', title: '她的资料', panel: '#fffdfdf0' }
@@ -45,7 +47,7 @@
     return now.getFullYear() - Number(value);
   }
   let listedYear = 0;
-  function syncAge() {
+  function syncBirthYears() {
     const currentYear = new Date().getFullYear();
     if (listedYear !== currentYear) {
       const previous = listedYear ? $('birth').value : '1982';
@@ -56,10 +58,9 @@
       }
       $('birth').value = previous; listedYear = currentYear;
     }
-    try { $('age').value = '约 ' + ageFromYear($('birth').value) + ' 岁'; } catch { $('age').value = '请选择有效年份'; }
   }
   function sync() {
-    syncAge();
+    syncBirthYears();
     document.body.classList.toggle('female', gender() === '女');
     $('themeLabel').textContent = gender() === '女' ? '她的资料 · 粉色' : '他的资料 · 蓝色';
     $('eduOther').hidden = $('edu').value !== '其他';
@@ -68,7 +69,7 @@
       $(id + 'Count').classList.toggle('over', n > 100); $(id).setAttribute('aria-invalid', n > 100 ? 'true' : 'false');
     }
   }
-  function changed() { state.revision++; if (state.number && $('memberName').value.trim() !== state.assignedName) { state.number = null; state.assignedName = ''; } sync(); syncNumber(); if (!state.busy) status('资料已更新，点击“生成并下载 PNG”即可下载最新卡片。'); }
+  function changed() { state.revision++; if (state.number && $('memberName').value.trim() !== state.assignedName) { state.number = null; state.assignedName = ''; } sync(); if (!state.busy) status('资料已更新，点击“生成并下载 PNG”即可下载最新卡片。'); syncNumber(); }
   function fieldError(id, message) { $(id).setAttribute('aria-invalid', 'true'); (id === 'photo' ? $('uploadPhoto') : $(id)).focus(); throw new Error(message); }
   function data() {
     for (const el of document.querySelectorAll('[aria-invalid]')) el.removeAttribute('aria-invalid');
@@ -130,22 +131,25 @@
     } finally { URL.revokeObjectURL(url); }
   }
   function release(image) { if (image) { image.width = 1; image.height = 1; } }
+  function photoMessage(message = '', error = false) {
+    const el = $('photoMessage'); el.textContent = message; el.hidden = !message;
+    el.classList.toggle('error', error);
+  }
   async function uploadPhoto() {
     const file = $('photo').files[0];
     if (!file) return; // Canceling the picker must preserve the existing photo.
     const token = ++state.photoToken;
     release(state.photo); state.photo = null; state.photoError = ''; changed();
     state.transform = { zoom: 1, x: 0, y: 0 }; drawCrop();
-    $('photoFilename').textContent = file.name; $('uploadPhoto').textContent = '更换照片';
-    $('photoMessage').classList.remove('error');
-    $('photoMessage').textContent = '正在读取图片…'; state.pending++; $('generate').disabled = true;
+    $('uploadPhoto').textContent = '更换照片';
+    photoMessage('正在读取图片…'); state.pending++; $('generate').disabled = true;
     try {
       const image = await decodeFile(file);
       if (token !== state.photoToken) { release(image); return; }
-      state.photo = image; drawCrop();
+      state.photo = image; drawCrop(); photoMessage();
     } catch (error) {
       if (token !== state.photoToken) return;
-      state.photoError = error.message; $('photoMessage').textContent = error.message; $('photoMessage').classList.add('error');
+      state.photoError = error.message; photoMessage(error.message, true);
       status(error.message, true);
     } finally { state.pending--; $('generate').disabled = state.busy || state.pending > 0; }
   }
@@ -156,15 +160,18 @@
     transform.y = Math.max(-(height - PH) / 2, Math.min((height - PH) / 2, transform.y));
     return { scale, width, height, x: (PW - width) / 2 + transform.x, y: (PH - height) / 2 + transform.y };
   }
+  // Render at the same local pixel origin for both adjustment and export, avoiding resampling drift.
+  function paintPhoto(target, transform = state.transform) {
+    target.clearRect(0, 0, PW, PH);
+    const g = geometry(transform); target.drawImage(state.photo, g.x, g.y, g.width, g.height);
+  }
   function drawCrop() {
     cropCtx.clearRect(0, 0, PW, PH);
     $('cropPlaceholder').hidden = !!state.photo;
     for (const id of ['zoom', 'centerPhoto', 'resetPhoto']) $(id).disabled = !state.photo;
     $('zoom').value = Math.round(state.transform.zoom * 100); $('zoomValue').value = $('zoom').value + '%';
     if (!state.photo) return;
-    const g = geometry(); cropCtx.drawImage(state.photo, g.x, g.y, g.width, g.height);
-    const effectiveW = Math.round(PW / g.scale), effectiveH = Math.round(PH / g.scale);
-    $('photoMessage').textContent = `原图 ${state.photo.width} × ${state.photo.height}；有效裁切约 ${effectiveW} × ${effectiveH} 像素。${effectiveW < PW || effectiveH < PH ? '清晰度偏低，建议更换高清照片，也可继续生成。' : '清晰度满足当前导出尺寸。'}`;
+    paintPhoto(cropCtx);
   }
   function font(size, weight = 400) { ctx.font = `${weight} ${size}px ${FONT}`; }
   function text(value, x, y, size, color, weight = 400, align = 'left') {
@@ -238,7 +245,7 @@
   function renderCard(d, transform, theme, background, layout) {
     // Background assets already contain the brand, slogans, waves and boat. Never redraw them.
     ctx.clearRect(0, 0, W, H); ctx.imageSmoothingQuality = 'high'; ctx.drawImage(background, 0, 0, W, H);
-    const p = LAYOUT.photo, g = geometry({ ...transform });
+    const p = LAYOUT.photo; paintPhoto(photoCtx, { ...transform });
     ctx.save();
     // Restrict shadow to the working area, keeping the original branding and footer untouched.
     ctx.beginPath(); ctx.rect(828, 208, 592, 420); ctx.clip();
@@ -246,7 +253,7 @@
     round(p.x, p.y, p.w, p.h, 16, '#fff'); ctx.restore();
     ctx.save(); ctx.beginPath(); ctx.roundRect(p.x, p.y, p.w, p.h, 16); ctx.clip();
     ctx.fillStyle = theme.pale; ctx.fillRect(p.x, p.y, p.w, p.h);
-    ctx.drawImage(state.photo, p.x + g.x, p.y + g.y, g.width, g.height); ctx.restore();
+    ctx.drawImage(photoLayer, p.x, p.y); ctx.restore();
     ctx.strokeStyle = '#fffffff0'; ctx.lineWidth = 4;
     ctx.beginPath(); ctx.roundRect(p.x + 2, p.y + 2, p.w - 4, p.h - 4, 14); ctx.stroke();
     panel(LAYOUT.info, theme); sectionTitle(theme.title, LAYOUT.info, theme, d.number);
@@ -268,13 +275,13 @@
   const COUNTER_KEY = 'tongzhou.memberCard.counter.v1';
   const LOCK_NAME = 'tongzhou.memberCard.number-lock.v1';
   let seenRecord = false;
-  const formatNumber = value => 'TZ' + String(value).padStart(4, '0');
+  const formatNumber = value => 'TZ-' + String(value).padStart(5, '0');
   function readCounter() {
     let raw;
     try { raw = localStorage.getItem(COUNTER_KEY); }
     catch { throw new Error('浏览器无法读取编号记录，请允许本地存储后重试。'); }
     if (raw === null) {
-      if (seenRecord) throw new Error('编号记录已被清除，请重新打开工具，并将起始号设置到已使用的最大号之后。');
+      if (seenRecord) throw new Error('编号记录已被清除，已停止新发号。请联系维护人员核对并恢复原编号记录。');
       return { version: 1, next: 1, lastIssued: 0 };
     }
     let record;
@@ -316,40 +323,25 @@
       };
     });
   }
-  function syncNumber(updateSetting = false) {
+  function syncNumber() {
+    const badge = $('numberStatus');
     try {
-      const record = readCounter();
-      const next = record.next > 9999 ? '已用完 TZ9999' : '下一编号 ' + formatNumber(record.next);
-      $('numberStatus').textContent = state.number ? `当前编号 ${formatNumber(state.number)} · ${next}` : next + '（生成时分配）';
-      $('numberStatus').classList.remove('error');
-      if (updateSetting) $('startNumber').value = record.next > 9999 ? '' : String(record.next);
+      const record = readCounter(), exhausted = record.next > 9999;
+      badge.textContent = state.number ? formatNumber(state.number) : exhausted ? '编号已用完' : '待生成';
+      badge.title = state.number ? '当前资料编号' : exhausted ? '编号已达到 ' + formatNumber(9999) : '成功生成后分配编号';
+      badge.classList.toggle('error', exhausted && !state.number);
     } catch (error) {
-      $('numberStatus').textContent = state.number ? `当前编号 ${formatNumber(state.number)}；新编号不可用：${error.message}` : error.message;
-      $('numberStatus').classList.add('error');
+      badge.textContent = state.number ? formatNumber(state.number) : '编号不可用';
+      badge.title = error.message; badge.classList.add('error');
+      status(error.message, true);
     }
   }
-  $('saveNumber').onclick = async () => {
-    $('saveNumber').disabled = true;
-    try {
-      const value = $('startNumber').value;
-      if (!/^\d{1,4}$/.test(value) || Number(value) < 1) throw new Error('起始序号请输入 1–9999 的整数。');
-      const next = Number(value);
-      await withCounterLock(() => {
-        const record = readCounter();
-        if (record.lastIssued > 0 && next < record.next) throw new Error('已有编号被使用，起始序号不能小于下一个待分配号。');
-        writeCounter({ ...record, next });
-      });
-      $('numberMessage').textContent = '已设置：下一份新资料从 ' + formatNumber(next) + ' 开始。';
-      $('numberMessage').classList.remove('error'); syncNumber(true);
-    } catch (error) { $('numberMessage').textContent = error.message; $('numberMessage').classList.add('error'); }
-    finally { $('saveNumber').disabled = false; }
-  };
   async function generate(event) {
     event.preventDefault(); if (state.busy || state.pending) return;
     state.busy = true; $('generate').disabled = true; $('generate').textContent = '正在生成…';
     const revision = state.revision;
     try {
-      syncAge(); const d = data(); await document.fonts.ready;
+      syncBirthYears(); const d = data(); await document.fonts.ready;
       const theme = themeFor(d.gender), background = await loadBackground(theme.key);
       if (!background) throw new Error('当前主题底图加载失败，请完整解压工具文件后重试。');
       const layout = layoutCard(d);
@@ -358,7 +350,7 @@
         if (revision !== state.revision) throw new Error('资料已变化，请重新点击生成。');
         const existing = state.number;
         const candidate = existing || readCounter().next;
-        if (candidate > 9999) throw new Error('编号已达到 TZ9999，不能继续分配新编号。');
+        if (candidate > 9999) throw new Error('编号已达到 ' + formatNumber(9999) + '，不能继续分配新编号。');
         d.number = formatNumber(candidate);
         renderCard(d, { ...state.transform }, theme, background, layout);
         blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
@@ -401,13 +393,12 @@
   $('reset').onclick = () => {
     state.photoToken++; release(state.photo); state.photo = null; state.photoError = ''; state.number = null; state.assignedName = '';
     state.transform = { zoom: 1, x: 0, y: 0 }; HTMLFormElement.prototype.reset.call($('cardForm'));
-    $('photoMessage').classList.remove('error'); $('photoMessage').textContent = '请选择会员照片。';
-    $('photoFilename').textContent = '尚未选择照片'; $('uploadPhoto').textContent = '上传照片';
+    photoMessage(); $('uploadPhoto').textContent = '上传照片';
     for (const el of document.querySelectorAll('[aria-invalid]')) el.removeAttribute('aria-invalid');
-    changed(); drawCrop(); syncNumber(true); status('已重置资料并清除照片，编号计数保持不变。');
+    changed(); drawCrop(); status('已重置资料并清除照片，编号计数保持不变。'); syncNumber();
   };
-  window.addEventListener('focus', () => { syncAge(); syncNumber(); });
-  document.addEventListener('visibilitychange', syncAge); setInterval(syncAge, 60000);
-  window.addEventListener('storage', event => { if (event.key === COUNTER_KEY || event.key === null) syncNumber(true); });
-  sync(); drawCrop(); syncNumber(true);
+  window.addEventListener('focus', () => { syncBirthYears(); syncNumber(); });
+  document.addEventListener('visibilitychange', syncBirthYears); setInterval(syncBirthYears, 60000);
+  window.addEventListener('storage', event => { if (event.key === COUNTER_KEY || event.key === null) syncNumber(); });
+  sync(); drawCrop(); syncNumber();
 })();
