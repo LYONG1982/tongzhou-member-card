@@ -1,5 +1,5 @@
 同舟婚恋 · 会员卡片生成器
-版本：1.6.1 / 2026-10-21
+版本：1.6.2 / 2026-10-21
 在线使用：https://lyong1982.github.io/tongzhou-member-card/
 
 一、填写 → 生成卡片 → 最终预览 → 保存下载
@@ -60,7 +60,7 @@
 五、运行与隐私
 原生HTML/CSS/JavaScript + Canvas，GitHub Pages静态托管，无服务端或外部脚本依赖。
 网页源码、品牌与卡通素材公开可访问；网站访问产生常规静态请求，会员照片和资料不会上传。
-姓名、照片、资料、遮挡参数仅存在当前页面内存。localStorage仅保存序号；IndexedDB仅协调编号。
+姓名、照片、资料、遮挡参数仅存在当前页面内存。localStorage仅保存序号和本机打开次数；IndexedDB仅协调编号和打开次数的并发写入。
 下载图片由用户自行保管。本工具不连接会员后台，不提供历史资料查询或跨设备同步。
 仍支持下载运行文件后直接用Chrome/Edge打开index.html；需保持assets及其他运行文件位置。
 核心文件：index.html、styles.css、app.js、assets/backgrounds.js、assets/avatars.js。
@@ -68,3 +68,5 @@
 JS嵌入相同原图字节以支持file://离线导出；没有临时Figma URL或运行时素材下载。
 
 建议PC Chrome/Edge使用；检查使用macOS Chromium。Windows/Edge实机未验证。
+
+页头“本机已打开 N 次”仅统计当前浏览器、当前站点。新打开或刷新页面加1，编辑、预览、下载、重置不增加。清除站点数据后重新计数；其他电脑或浏览器各自统计。次数不代表使用人数，不上传任何访问统计数据；统计不可用不影响卡片功能。

@@ -539,4 +539,63 @@
   window.addEventListener('focus', refreshNumber);
   window.addEventListener('storage', event => { if (event.key === COUNTER_KEY || event.key === null) refreshNumber(); });
   sync(); drawCrop(); syncNumber();
+  // Page opens use their own storage and mutex; failures never affect member numbering.
+  const OPEN_KEY = 'tongzhou.memberCard.pageOpenCount.v1', OPEN_LOCK = 'tongzhou.memberCard.page-open-lock.v1';
+  function readOpenCount() {
+    const raw = localStorage.getItem(OPEN_KEY);
+    if (raw === null) return null;
+    const record = JSON.parse(raw);
+    if (!record || record.version !== 1 || !Number.isSafeInteger(record.count) || record.count < 1) throw new Error('Invalid page-open count');
+    return record.count;
+  }
+  function showOpenCount() {
+    try {
+      const count = readOpenCount();
+      if (count === null) throw new Error('No page-open count');
+      $('pageOpenCount').textContent = `本机已打开 ${count} 次`;
+    } catch { $('pageOpenCount').textContent = '打开次数暂不可用'; }
+  }
+  async function withOpenCountLock(action) {
+    if (navigator.locks?.request) {
+      const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 5000);
+      try { return await navigator.locks.request(OPEN_LOCK, { mode: 'exclusive', signal: controller.signal }, action); }
+      finally { clearTimeout(timer); }
+    }
+    return new Promise((resolve, reject) => {
+      let request, db, cancelled = false;
+      const timer = setTimeout(() => fail(), 5000);
+      function fail() { cancelled = true; clearTimeout(timer); db?.close(); reject(new Error('Page-open storage unavailable')); }
+      try { request = indexedDB.open(OPEN_LOCK, 1); } catch { fail(); return; }
+      request.onupgradeneeded = () => request.result.createObjectStore('mutex');
+      request.onerror = request.onblocked = fail;
+      request.onsuccess = () => {
+        db = request.result;
+        if (cancelled) { db.close(); return; }
+        try {
+          const tx = db.transaction('mutex', 'readwrite'), store = tx.objectStore('mutex');
+          store.get('gate').onsuccess = () => {
+            if (cancelled) { tx.abort(); return; }
+            try { action(); store.put(1, 'gate'); } catch { tx.abort(); }
+          };
+          tx.oncomplete = () => { clearTimeout(timer); db.close(); resolve(); };
+          tx.onabort = tx.onerror = fail;
+        } catch { fail(); }
+      };
+    });
+  }
+  async function countPageOpen() {
+    try {
+      await withOpenCountLock(() => {
+        const count = (readOpenCount() ?? 0) + 1;
+        if (!Number.isSafeInteger(count)) throw new Error('Page-open count overflow');
+        const value = JSON.stringify({ version: 1, count });
+        localStorage.setItem(OPEN_KEY, value);
+        if (localStorage.getItem(OPEN_KEY) !== value) throw new Error('Page-open count not saved');
+      });
+      showOpenCount();
+    } catch { $('pageOpenCount').textContent = '打开次数暂不可用'; }
+  }
+  window.addEventListener('storage', event => { if (event.key === OPEN_KEY || event.key === null) showOpenCount(); });
+  window.addEventListener('pageshow', event => { if (event.persisted) showOpenCount(); });
+  countPageOpen();
 })();
