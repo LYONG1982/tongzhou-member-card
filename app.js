@@ -14,7 +14,7 @@
   const PW = LAYOUT.photo.w, PH = LAYOUT.photo.h;
   const FONT = '"Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif';
   const MAX_BYTES = 20 * 1024 * 1024, MAX_PIXELS = 50 * 1000 * 1000;
-  const state = { photo: null, number: null, assignedName: '', transform: { zoom: 1, x: 0, y: 0 }, photoToken: 0, revision: 0, busy: false, pending: 0, photoError: '', privacy: '', mask: null, avatar: null, preview: null, view: 'edit', privacyToken: 0 };
+  const state = { photo: null, number: null, manualNumber: null, assignedName: '', transform: { zoom: 1, x: 0, y: 0 }, photoToken: 0, revision: 0, busy: false, pending: 0, photoError: '', privacy: '', mask: null, avatar: null, preview: null, view: 'edit', privacyToken: 0 };
   const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d');
   const crop = $('crop'), cropCtx = crop.getContext('2d');
@@ -42,31 +42,17 @@
   }
   // Preload without exposing unhandled failures; generation reports only its selected template.
   loadBackground('male'); loadBackground('female');
-  const gender = () => document.querySelector('[name=gender]:checked').value;
+  const gender = () => document.querySelector('[name=gender]:checked')?.value || '';
   const count = value => Array.from(value).length;
   function status(message, error = false) { for (const id of ['status', 'previewStatus']) { $(id).textContent = message; $(id).classList.toggle('error', error); } }
   function ageFromYear(value, now = new Date()) {
-    if (!/^\d{4}$/.test(value) || Number(value) < 1900) throw new Error('请选择 1900 年以后的有效出生年份。');
+    if (!/^\d{4}$/.test(value) || Number(value) < 1900) throw new Error('请填写 1900 年起的四位出生年份。');
     if (Number(value) > now.getFullYear()) throw new Error('出生年份不能晚于当前年份。');
     return now.getFullYear() - Number(value);
   }
-  let listedYear = 0;
-  function syncBirthYears() {
-    const currentYear = new Date().getFullYear();
-    if (listedYear !== currentYear) {
-      const previous = listedYear ? $('birth').value : '1982';
-      $('birth').replaceChildren(new Option('请选择年份', ''));
-      for (let year = currentYear; year >= 1900; year--) {
-        const option = new Option(year + '年', String(year), year === 1982, String(year) === previous);
-        $('birth').add(option);
-      }
-      $('birth').value = previous; listedYear = currentYear;
-    }
-  }
   function sync() {
-    syncBirthYears();
     document.body.classList.toggle('female', gender() === '女');
-    $('themeLabel').textContent = gender() === '女' ? '她的资料 · 粉色' : '他的资料 · 蓝色';
+    $('themeLabel').textContent = gender() ? (gender() === '女' ? '她的资料 · 粉色' : '他的资料 · 蓝色') : '请选择性别';
     $('eduOther').hidden = $('edu').value !== '其他';
     for (const [id, spec] of Object.entries(PROSE)) {
       const n = count($(id).value), capacity = proseCapacity(spec);
@@ -82,11 +68,11 @@
     if (clearChoice) { state.privacy = ''; state.avatar = null; $('maskSize').value = 300; $('maskSizeValue').value = '300 px'; }
     state.preview = null;
   }
-  let lastName = '', lastGender = '男';
+  let lastName = '', lastGender = '';
   function changed() {
     state.revision++; state.preview = null;
     const name = $('memberName').value.trim(), sex = gender();
-    if (name !== lastName) invalidateMask(true);
+    if (name !== lastName) { invalidateMask(true); state.manualNumber = null; }
     else if (sex !== lastGender) { invalidateMask(); state.avatar = null; }
     if (state.number && name !== state.assignedName) { state.number = null; state.assignedName = ''; }
     lastName = name; lastGender = sex;
@@ -97,10 +83,11 @@
     for (const el of document.querySelectorAll('[aria-invalid]')) el.removeAttribute('aria-invalid');
     const name = $('memberName').value.trim();
     if (!name || count(name) > 40) fieldError('memberName', '请填写姓名（1–40 个字符），姓名不会显示在成品中。');
-    let age; try { age = ageFromYear($('birth').value); } catch (e) { fieldError('birth', e.message); }
+    if (!gender()) fieldError('genderMale', '请选择TA的性别，以匹配卡片风格。');
+    let age; try { age = ageFromYear($('birth').value.trim()); } catch (e) { fieldError('birth', e.message); }
     const height = Number($('height').value);
     if (!Number.isInteger(height) || height < 100 || height > 230) fieldError('height', '请填写 100–230 之间的整数身高（cm）。');
-    const result = { gender: gender(), birth: $('birth').value, age, height };
+    const result = { gender: gender(), birth: $('birth').value.trim(), age, height };
     for (const [id, title, limit] of [['ethnic', '民族', 12], ['job', '工作', 24], ['income', '月收入', 24], ['assets', '资产', 30]]) {
       if (count($(id).value) > limit) fieldError(id, `${title}最多 ${limit} 个字符，当前 ${count($(id).value)} 个。请修改后再生成。`);
       result[id] = $(id).value.trim();
@@ -108,7 +95,7 @@
     for (const id of Object.keys(PROSE)) result[id] = $(id).value.trim();
     result.marital = $('marital').value;
     result.edu = $('edu').value === '其他' ? $('eduOther').value.trim() : $('edu').value;
-    if (!result.edu || count(result.edu) > 16) fieldError('eduOther', '请填写其他学历，最多 16 个字符。');
+    if (!result.edu || count(result.edu) > 16) fieldError($('edu').value === '其他' ? 'eduOther' : 'edu', '请选择学历；其他学历最多 16 个字符。');
     if (state.photoError) fieldError('photo', state.photoError);
     if (!state.photo) fieldError('photo', '请先上传会员照片。');
     return result;
@@ -229,26 +216,26 @@
   function layoutCard(d) {
     const left = [['出生年份', d.birth + '年'], ['身高', `${d.height} cm`], ['民族', d.ethnic], ['婚姻状况', d.marital]];
     const right = [['学历', d.edu], ['工作', d.job], ['月收入', d.income], ['资产', d.assets]];
+    const longMarital = wrap(d.marital, 207, 27, 500).length > 1;
     const rows = [];
     for (const [entries, x] of [[left, 717], [right, 1056]]) {
       entries.forEach(([label, value], i) => {
-        const lines = measuredLines(value, 207, 36, 27, 36, label, 500);
-        rows.push({ label, lines, x, y: 290 + i * 44 });
+        const lines = measuredLines(value, 207, label === '婚姻状况' ? 72 : 36, 27, 36, label, 500);
+        rows.push({ label, lines, x, y: (longMarital ? 278 : 290) + i * 44 });
       });
     }
     const sections = Object.entries(PROSE).map(([id, spec]) => {
       const lines = wrap(d[id], spec.width, 24);
       if (lines.length > spec.lines) fieldError(id, `${spec.title}内容超出可读排版空间（最多 ${spec.lines} 行），请减少换行或精简文字。`);
-      return { id, title: spec.title, box: LAYOUT[id], lines };
+      return { id, title: spec.title, box: { ...LAYOUT[id], y: longMarital ? { family: 490, review: 644, match: 838 }[id] : LAYOUT[id].y }, lines };
     });
-    return { rows, sections };
+    return { rows, sections, dividerY: longMarital ? 269 : 275 };
   }
   function paintMask(target, theme, mask, avatar) {
     if (!mask || !avatar) return;
     const { x, y, size } = mask;
     target.save(); target.beginPath(); target.rect(0, 0, PW, PH); target.clip();
-    // An opaque disk is the actual privacy cover; transparent hair edges alone are insufficient.
-    target.fillStyle = theme.pale; target.beginPath(); target.arc(x, y, size / 2, 0, Math.PI * 2); target.fill();
+    // Preserve the supplied PNG alpha; never add a background behind the avatar.
     target.drawImage(avatar, x - size / 2, y - size / 2, size, size); target.restore();
   }
   function renderCard(d, transform, theme, background, layout, privacy = state.privacy, mask = state.mask, avatar = state.avatar) {
@@ -263,7 +250,7 @@
     ctx.strokeStyle = theme.border + '38'; ctx.lineWidth = 1; ctx.beginPath(); ctx.roundRect(688.5, 184.5, 711, 831, 23.5); ctx.stroke();
     text(theme.title, 717, 213 + 6, 36, theme.accent, 700);
     text(d.number ? '编号 ' + d.number : '编号待保存', 1371, 219 + 4.5, 27, theme.accent, 500, 'right');
-    round(717, 275, 654, 1, 0, theme.soft);
+    round(717, layout.dividerY, 654, 1, 0, theme.soft);
     for (const row of layout.rows) {
       text(row.label, row.x, row.y + 6.5, 23, theme.muted);
       drawLines(row.lines, row.x + 108, row.y + 4.5, 27, 36, theme.ink, 500);
@@ -328,19 +315,49 @@
       };
     });
   }
-  function syncNumber() {
-    const badge = $('numberStatus');
-    try {
-      const record = readCounter(), exhausted = record.next > 9999;
-      badge.textContent = state.number ? formatNumber(state.number) : exhausted ? '编号已用完' : '待生成';
-      badge.title = state.number ? '当前资料编号' : exhausted ? '编号已达到 ' + formatNumber(9999) : '首次保存下载时分配编号';
-      badge.classList.toggle('error', exhausted && !state.number);
-    } catch (error) {
-      badge.textContent = state.number ? formatNumber(state.number) : '编号不可用';
-      badge.title = error.message; badge.classList.add('error');
-      status(error.message, true);
-    }
+  function suggestedNumber() { return state.manualNumber ?? state.number ?? readCounter().next; }
+  function checkManualNumber(value, record = readCounter()) {
+    if (!Number.isInteger(value) || value < 1 || value > 9999) throw new Error('请输入 1–9999 的整数序号。');
+    if (value !== state.number && value < record.next) throw new Error('该编号已使用或已保留，请选择当前会员原号，或不小于 ' + formatNumber(record.next) + ' 的新号。');
+    return value;
   }
+  function syncNumber() {
+    let code, pending = '', error = '', title = '';
+    try {
+      const record = readCounter(), candidate = state.manualNumber ?? state.number ?? record.next;
+      if (candidate > 9999) { code = '编号已用完'; error = '编号已达到 ' + formatNumber(9999); }
+      else {
+        code = formatNumber(candidate); pending = candidate === state.number ? '已分配' : '待保存';
+        title = candidate === state.number ? '当前会员正式编号' : '保存前不占用编号';
+        if (state.manualNumber !== null) { try { checkManualNumber(candidate, record); } catch (e) { error = e.message; pending = '编号冲突'; } }
+      }
+    } catch (e) { code = state.number ? formatNumber(state.number) : '编号不可用'; error = e.message; }
+    for (const id of ['numberStatus', 'previewNumberStatus']) { $(id).textContent = code; $(id).title = error || title; $(id).classList.toggle('error', !!error); }
+    for (const id of ['numberPending', 'previewNumberPending']) $(id).textContent = pending;
+    if (error) status(error, true);
+  }
+  function openNumberEditor() {
+    if (state.busy) return;
+    $('numberError').textContent = ''; $('numberInput').removeAttribute('aria-invalid');
+    try { const value = suggestedNumber(); $('numberInput').value = value <= 9999 ? String(value).padStart(5, '0') : ''; } catch { $('numberInput').value = ''; }
+    $('numberDialog').showModal(); $('numberInput').focus(); $('numberInput').select();
+  }
+  function applyNumber() {
+    if (state.busy) return;
+    try {
+      const raw = $('numberInput').value.trim(); if (!/^\d{1,5}$/.test(raw)) throw new Error('请输入 1–9999 的整数序号。');
+      state.manualNumber = checkManualNumber(Number(raw)); state.revision++;
+      $('numberDialog').close(); syncNumber(); updatePreview(); status('编号已应用，保存下载时正式提交。');
+    } catch (e) { $('numberError').textContent = e.message; $('numberInput').setAttribute('aria-invalid', 'true'); $('numberInput').focus(); }
+  }
+  $('editNumber').onclick = $('editPreviewNumber').onclick = openNumberEditor;
+  $('applyNumber').onclick = applyNumber;
+  $('numberInput').onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); applyNumber(); } };
+  $('cancelNumber').onclick = () => $('numberDialog').close();
+  $('autoNumber').onclick = () => {
+    if (state.busy) return;
+    state.manualNumber = null; state.revision++; $('numberDialog').close(); syncNumber(); updatePreview(); status('已恢复自动编号，现有正式编号保持不变。');
+  };
   const avatarCache = new Map();
   const editor = $('maskEditor'), editorCtx = editor.getContext('2d');
   let avatarLoading = false, maskDrag = null;
@@ -362,6 +379,7 @@
     $('saveCard').textContent = state.busy ? '正在处理…' : '保存下载';
     $('backToEdit').disabled = state.busy;
     $('privacyChoices').disabled = state.busy;
+    for (const id of ['editNumber', 'editPreviewNumber', 'applyNumber', 'autoNumber']) $(id).disabled = state.busy;
     $('maskControls').hidden = !covered;
     $('maskSize').disabled = state.busy || avatarLoading || !state.mask;
     $('repositionMask').disabled = state.busy || !state.mask;
@@ -380,17 +398,18 @@
   function updatePreview() {
     if (!state.preview) return;
     const { d, transform, theme, background, layout } = state.preview;
-    d.number = state.number ? formatNumber(state.number) : null;
+    try { const candidate = suggestedNumber(); d.number = candidate <= 9999 ? formatNumber(candidate) : null; } catch { d.number = null; }
     renderCard(d, transform, theme, background, layout);
     previewCtx.clearRect(0, 0, W, H); previewCtx.drawImage(canvas, 0, 0);
     editorCtx.clearRect(0, 0, W, H);
     if (state.privacy === 'cover' && state.mask) {
       const m = state.mask; editorCtx.strokeStyle = theme.accent; editorCtx.lineWidth = 3; editorCtx.setLineDash([8, 6]);
       editorCtx.save(); editorCtx.beginPath(); editorCtx.rect(LAYOUT.photo.x, LAYOUT.photo.y, PW, PH); editorCtx.clip();
-      editorCtx.beginPath(); editorCtx.arc(LAYOUT.photo.x + m.x, LAYOUT.photo.y + m.y, m.size / 2, 0, Math.PI * 2); editorCtx.stroke(); editorCtx.restore();
+      editorCtx.strokeRect(LAYOUT.photo.x + m.x - m.size / 2, LAYOUT.photo.y + m.y - m.size / 2, m.size, m.size); editorCtx.restore();
     }
     controls();
   }
+  const defaultMask = () => ({ x: PW / 2, y: PH * .3, size: 300 });
   async function selectPrivacy(value) {
     if (state.busy) return;
     state.privacy = value; state.revision++; const token = ++state.privacyToken;
@@ -399,7 +418,8 @@
     if (value === 'original') { status('已保留原照，确认卡片后点击保存下载。'); return; }
     try {
       if (!state.avatar) { const avatar = await loadAvatar(themeFor(gender()).key); if (token !== state.privacyToken) return; state.avatar = avatar; }
-      status(state.mask ? '请检查面部已完整遮住，再保存下载。' : '请点击照片中的脸部放置头像，再调整大小。');
+      if (!state.mask) state.mask = defaultMask();
+      status('请调整头像大小和位置，确保遮住面部。');
     } catch (error) { if (token === state.privacyToken) status(error.message, true); }
     finally { if (token === state.privacyToken) { avatarLoading = false; updatePreview(); controls(); } }
   }
@@ -407,7 +427,7 @@
     event.preventDefault(); if (state.busy || state.pending) return;
     state.busy = true; controls(); const revision = state.revision;
     try {
-      syncBirthYears(); const d = data(); await document.fonts.ready;
+      const d = data(); await document.fonts.ready;
       const theme = themeFor(d.gender), background = await loadBackground(theme.key);
       if (!background) throw new Error('当前主题底图加载失败，请检查工具资源后重试。');
       const layout = layoutCard(d);
@@ -425,12 +445,15 @@
     if ($('saveCard').disabled || state.busy || !state.preview) return;
     state.busy = true; controls(); const revision = state.revision;
     const snap = state.preview, d = { ...snap.d }, mask = state.mask && { ...state.mask }, privacy = state.privacy, avatar = state.avatar;
+    const filenameName = $('memberName').value.trim().replace(/[<>:"/\\|?*\u0000-\u001f\u007f]/g, '_').replace(/[. ]+$/g, '') || '未命名';
     try {
       if (privacy === 'cover' && (!mask || !avatar)) throw new Error('请先放置卡通头像。');
       let blob = null, assigned = false;
       for (let attempt = 0; attempt < 8; attempt++) {
         if (revision !== state.revision) throw new Error('资料已变化，请返回修改后重新生成。');
-        const existing = state.number, candidate = existing || readCounter().next;
+        const candidate = state.manualNumber ?? state.number ?? readCounter().next;
+        const existing = candidate === state.number;
+        if (state.manualNumber !== null) checkManualNumber(candidate);
         if (candidate > 9999) throw new Error('编号已达到 ' + formatNumber(9999) + '，不能继续分配新编号。');
         d.number = formatNumber(candidate);
         renderCard(d, snap.transform, snap.theme, snap.background, snap.layout, privacy, mask, avatar);
@@ -440,9 +463,12 @@
         if (existing) { assigned = true; break; }
         assigned = await withCounterLock(() => {
           if (revision !== state.revision) throw new Error('资料已变化，请返回修改后重新生成。');
-          const record = readCounter(); if (record.next !== candidate) return false;
+          const record = readCounter();
+          if (state.manualNumber !== null) {
+            if (candidate < record.next) throw new Error('该编号已被其他窗口占用，请修改编号后重试。');
+          } else if (record.next !== candidate) return false;
           writeCounter({ version: 1, next: candidate + 1, lastIssued: candidate });
-          state.number = candidate; state.assignedName = $('memberName').value.trim(); return true;
+          state.number = candidate; state.manualNumber = null; state.assignedName = $('memberName').value.trim(); return true;
         });
         if (assigned) break;
       }
@@ -451,10 +477,8 @@
       if (revision !== state.revision) throw new Error('资料已变化，请返回修改后重新生成。');
       // Copy the exact exported canvas: preview and downloaded image share the final pixels.
       snap.d.number = d.number; previewCtx.clearRect(0, 0, W, H); previewCtx.drawImage(canvas, 0, 0);
-      const date = new Date(), pad = n => String(n).padStart(2, '0');
-      const stamp = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}_${pad(date.getHours())}${pad(date.getMinutes())}`;
       const url = URL.createObjectURL(blob), link = document.createElement('a');
-      link.href = url; link.download = `同舟婚恋_会员卡片_${d.number}_${d.gender}_${stamp}.png`; document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 30000);
+      link.href = url; link.download = `${d.number}_${filenameName}_${d.birth}_${d.gender}.png`; document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 30000);
       status(`已生成 ${d.number} · 1440 × 1080 PNG，并发起下载。可在浏览器下载列表中查看。`);
     } catch (error) { syncNumber(); status(error.message || '保存失败，请重试。', true); }
     finally { state.busy = false; controls(); }
@@ -491,7 +515,7 @@
     moveMask(state.mask.x + (event.key === 'ArrowLeft' ? -n : event.key === 'ArrowRight' ? n : 0), state.mask.y + (event.key === 'ArrowUp' ? -n : event.key === 'ArrowDown' ? n : 0));
   };
   $('maskSize').oninput = () => { if (!state.busy && state.mask) { state.mask.size = Number($('maskSize').value); state.revision++; updatePreview(); } };
-  $('repositionMask').onclick = () => { if (!state.busy) { state.mask = null; state.revision++; updatePreview(); status('请重新点击照片中的脸部放置头像。'); } };
+  $('repositionMask').onclick = () => { if (!state.busy) { state.mask = defaultMask(); state.revision++; updatePreview(); status('已恢复默认位置，请调整头像确保遮住面部。'); } };
   $('cardForm').addEventListener('submit', generate);
   $('cardForm').addEventListener('input', event => { if (event.target.type !== 'file') changed(); });
   $('photo').addEventListener('change', uploadPhoto);
@@ -505,14 +529,14 @@
   for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) crop.addEventListener(name, () => { drag = null; });
   crop.addEventListener('keydown', event => { if (!state.photo || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return; event.preventDefault(); invalidateMask(); const step = event.shiftKey ? 20 : 3; state.transform.x += event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0; state.transform.y += event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0; changed(); drawCrop(); });
   $('reset').onclick = () => {
-    invalidateMask(true); avatarLoading = false; state.photoToken++; release(state.photo); state.photo = null; state.photoError = ''; state.number = null; state.assignedName = '';
+    invalidateMask(true); avatarLoading = false; state.photoToken++; release(state.photo); state.photo = null; state.photoError = ''; state.number = null; state.manualNumber = null; state.assignedName = '';
     state.transform = { zoom: 1, x: 0, y: 0 }; HTMLFormElement.prototype.reset.call($('cardForm'));
     photoMessage(); $('uploadPhoto').textContent = '上传照片';
     for (const el of document.querySelectorAll('[aria-invalid]')) el.removeAttribute('aria-invalid');
     changed(); drawCrop(); status('已重置资料并清除照片，编号计数保持不变。'); syncNumber();
   };
-  window.addEventListener('focus', () => { syncBirthYears(); syncNumber(); });
-  document.addEventListener('visibilitychange', syncBirthYears); setInterval(syncBirthYears, 60000);
-  window.addEventListener('storage', event => { if (event.key === COUNTER_KEY || event.key === null) syncNumber(); });
+  function refreshNumber() { syncNumber(); if (!state.busy && state.preview) updatePreview(); }
+  window.addEventListener('focus', refreshNumber);
+  window.addEventListener('storage', event => { if (event.key === COUNTER_KEY || event.key === null) refreshNumber(); });
   sync(); drawCrop(); syncNumber();
 })();
