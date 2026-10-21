@@ -1,0 +1,51 @@
+
+    <form id="cardForm" novalidate>
+      <section class="panel"><div class="section-heading"><span class="step">01</span><h2>基本资料</h2><span id="numberStatus" class="member-number" role="status" aria-live="polite">编号读取中</span><span id="numberPending" class="hint"></span><span id="themeLabel" class="theme-label">请选择性别</span></div>
+        <fieldset class="gender-choice"><legend>请选择TA的性别，匹配不同卡片风格</legend><label><input type="radio" name="gender" id="genderMale" value="男"> 男生 · 蓝色卡片</label><label><input type="radio" name="gender" value="女"> 女生 · 粉色卡片</label></fieldset>
+        <div class="fields">
+          <label class="field"><span>姓名 <span class="required">必填</span></span><input id="memberName" type="text" autocomplete="off" required placeholder="请输入会员姓名"><span class="hint">用于后台识别和下载文件名，不展示在成品中</span></label>
+          <label class="field">出生年份<input id="birth" type="text" inputmode="numeric" autocomplete="off" required aria-label="出生年份" placeholder="例如 1982"></label>
+          <label class="field">民族<input id="ethnic" type="text" value="汉族" autocomplete="off"></label>
+          <label class="field">婚姻状况<select id="marital"><option>未婚</option><option>离异</option><option>离异未育</option><option>短婚未育</option><option>离异有孩（不随身）</option><option>离异有孩</option></select></label>
+          <label class="field">身高（cm）<input id="height" type="number" min="100" max="230" step="1" required></label>
+          <label class="field">学历<select id="edu"><option value="">请选择学历</option><option>本科</option><option>大专</option><option>硕士</option><option>博士</option><option>高中</option><option>中专</option><option>初中及以下</option><option>其他</option></select><input id="eduOther" aria-label="其他学历" placeholder="请填写学历" hidden></label>
+          <label class="field">工作<input id="job" autocomplete="off"></label>
+          <label class="field">月收入<input id="income" autocomplete="off"></label>
+          <label class="field">资产<input id="assets" autocomplete="off" placeholder="请填写资产及负债情况" aria-describedby="assetsHint"><span id="assetsHint" class="hint">例如：有房有车，无明显负债。</span></label>
+        </div>
+      </section>
+      <section class="panel"><div class="section-heading"><span class="step">02</span><h2>关于这份相遇</h2></div>
+        <label class="field prose">家庭情况<textarea id="family" rows="3"></textarea><span id="familyCount" class="counter">已输入 0 字</span></label>
+        <div class="prose-grid">
+          <label class="field prose">红娘评价<textarea id="review" rows="5" placeholder="请客观描述会员的性格、兴趣爱好及个人优势。例如：性格开朗，待人真诚，喜欢旅行和运动，生活规律，工作稳定，重视家庭。"></textarea><span id="reviewCount" class="counter">已输入 0 字</span></label>
+          <label class="field prose">择偶要求<textarea id="match" rows="5" placeholder="请填写会员本人提出的择偶要求" aria-describedby="matchHint"></textarea><span id="matchHint" class="hint">可协助梳理和润色，内容须经会员确认，不得擅自改变其真实意愿。</span><span id="matchCount" class="counter">已输入 0 字</span></label>
+        </div>
+      </section>
+      <section class="panel"><div class="section-heading"><span class="step">03</span><h2>会员照片</h2></div>
+        <div class="photo-layout"><div>
+          <div class="field"><span>会员照片 <span class="required">必填</span></span><input id="photo" type="file" hidden accept="image/*,.jpg,.jpeg,.png,.webp,.gif,.bmp,.avif,.heic,.heif,.tif,.tiff"><button id="uploadPhoto" type="button" class="primary upload-button">上传照片</button></div>
+          <p id="photoMessage" class="message" aria-live="polite" hidden></p>
+          <label class="field zoom-label">照片缩放 <output id="zoomValue" for="zoom">100%</output><input id="zoom" type="range" min="100" max="300" value="100" disabled></label>
+          <div class="minor-actions"><button id="centerPhoto" type="button" class="secondary" disabled>居中</button><button id="resetPhoto" type="button" class="secondary" disabled>重置构图</button></div>
+        </div><div class="crop-column"><p class="crop-title">照片构图 <span>拖动调整位置</span></p><div class="crop-stage"><canvas id="crop" width="612" height="816" tabindex="0" role="img" aria-label="照片构图调整区，拖动或使用方向键移动照片">请使用支持 Canvas 的浏览器。</canvas><span id="cropPlaceholder">上传照片后调整构图</span></div><p class="hint">方向键微调，Shift + 方向键快速移动。此区域与成品照片框比例一致，请将脸部和肩部放入框内。</p></div></div>
+      </section>
+      <div class="action-bar"><div><p id="status" role="status" aria-live="polite">生成后，文字资料和照片将保存至工作台，持访问码的人可查看。</p><p class="hint">请确认照片与资料已获得会员使用授权。</p></div><div class="actions"><button type="button" id="reset" class="secondary">制作下一位</button><button id="generate" type="submit" class="primary">生成卡片</button></div></div>
+    </form>
+    <section id="previewPage" hidden aria-labelledby="previewTitle">
+      <div class="preview-heading"><div><p class="eyebrow">最后一步 · 确认照片展示方式</p><h1 id="previewTitle" tabindex="-1">最终预览</h1><p class="hint">检查卡片内容，选择是否遮挡面部，然后保存下载。</p></div><button id="backToEdit" type="button" class="secondary">返回修改</button></div>
+      <div class="preview-layout">
+        <div class="final-stage"><canvas id="finalCard" width="1440" height="1080" role="img" aria-label="最终会员卡片预览，不显示真实姓名"></canvas><canvas id="maskEditor" width="1440" height="1080" tabindex="0" aria-label="遮挡调整：点击照片脸部放置头像，拖动或方向键移动"></canvas></div>
+        <aside class="privacy-panel">
+          <div class="preview-number"><span id="previewNumberStatus" class="member-number"></span><span id="previewNumberPending" class="hint"></span></div>
+          <fieldset id="privacyChoices"><legend>照片展示方式</legend>
+            <label class="privacy-option"><input type="radio" name="privacy" value="original"><span><strong>保留原照</strong><small>展示上传的原始人物照片</small></span></label>
+            <label class="privacy-option"><input type="radio" name="privacy" value="cover"><span><strong>卡通遮挡</strong><small id="avatarLabel">使用男生卡通头像</small></span></label>
+          </fieldset>
+          <div id="maskControls" hidden><p class="hint">头像已自动放置，可拖动调整位置和缩放大小。方向键微调，Shift 加速。</p><label class="field zoom-label">头像大小<output id="maskSizeValue" for="maskSize">300 px</output><input id="maskSize" type="range" min="100" max="900" value="300"></label><button id="repositionMask" type="button" class="secondary">恢复默认位置</button><p class="hint privacy-note">请调整头像大小和位置，确保遮住面部。</p></div>
+          <p id="previewStatus" role="status" aria-live="polite">请选择照片展示方式。</p>
+          <button id="saveCard" type="button" class="primary" disabled>保存下载</button>
+        </aside>
+      </div>
+    </section>
+
+    <footer>同舟相伴，遇见更好的幸福。</footer>
