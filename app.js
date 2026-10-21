@@ -2,26 +2,30 @@
 (() => {
   const $ = id => document.getElementById(id);
   const W = 1440, H = 1080;
+  // Figma nodes 2:19 / 2:72; coordinates include the parent border.
   const LAYOUT = Object.freeze({
-    info: { x: 32, y: 216, w: 788, h: 404 },
-    photo: { x: 856, y: 217, w: 536, h: 402 },
-    family: { x: 62, y: 499, w: 728, h: 116 },
-    review: { x: 32, y: 632, w: 676, h: 192 },
-    match: { x: 724, y: 632, w: 684, h: 192 }
+    info: { x: 688, y: 184, w: 712, h: 832 },
+    photo: { x: 46, y: 192, w: 612, h: 816 },
+    family: { x: 717, y: 472, w: 654, h: 146 },
+    review: { x: 717, y: 632, w: 654, h: 186 },
+    match: { x: 717, y: 832, w: 654, h: 150 }
   });
+  const PROSE = { family: { title: '家庭情况', width: 618, lines: 2 }, review: { title: '红娘评价', width: 654, lines: 4 }, match: { title: '择偶要求', width: 654, lines: 3 } };
   const PW = LAYOUT.photo.w, PH = LAYOUT.photo.h;
   const FONT = '"Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif';
   const MAX_BYTES = 20 * 1024 * 1024, MAX_PIXELS = 50 * 1000 * 1000;
-  const state = { photo: null, number: null, assignedName: '', transform: { zoom: 1, x: 0, y: 0 }, photoToken: 0, revision: 0, busy: false, pending: 0, photoError: '' };
+  const state = { photo: null, number: null, assignedName: '', transform: { zoom: 1, x: 0, y: 0 }, photoToken: 0, revision: 0, busy: false, pending: 0, photoError: '', privacy: '', mask: null, avatar: null, preview: null, view: 'edit', privacyToken: 0 };
   const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d');
   const crop = $('crop'), cropCtx = crop.getContext('2d');
+  crop.width = PW; crop.height = PH;
+  const preview = $('finalCard'), previewCtx = preview.getContext('2d');
   const photoLayer = document.createElement('canvas'); photoLayer.width = PW; photoLayer.height = PH;
   const photoCtx = photoLayer.getContext('2d');
   ctx.imageSmoothingQuality = 'high'; cropCtx.imageSmoothingQuality = 'high'; photoCtx.imageSmoothingQuality = 'high';
   const TEMPLATES = Object.freeze({
-    男: { key: 'male', accent: '#0759a6', deep: '#073b70', pale: '#f0f7ff', soft: '#d8eafa', mid: '#74a9de', title: '他的资料', panel: '#ffffffed' },
-    女: { key: 'female', accent: '#b24672', deep: '#71304d', pale: '#fff2f7', soft: '#f7dfE9', mid: '#d985a6', title: '她的资料', panel: '#fffdfdf0' }
+    男: { key: 'male', accent: '#145f9e', deep: '#145f9e', pale: '#eaf3fc', soft: '#d1e2f1', ink: '#18364f', muted: '#58728b', border: '#7eafd7', title: '他的资料' },
+    女: { key: 'female', accent: '#b64d6a', deep: '#b64d6a', pale: '#fff0f3', soft: '#f0d9df', ink: '#543340', muted: '#8e6977', border: '#dfa1b4', title: '她的资料' }
   });
   const themeFor = gender => TEMPLATES[gender];
   const backgrounds = new Map();
@@ -30,7 +34,7 @@
       const source = window.TONGZHOU_BACKGROUNDS?.[key];
       if (!source) { resolve(null); return; }
       const image = new Image();
-      image.onload = () => resolve(image.naturalWidth === 1448 && image.naturalHeight === 1086 ? image : null);
+      image.onload = () => resolve(image.naturalWidth === W && image.naturalHeight === H ? image : null);
       image.onerror = () => resolve(null);
       image.src = source;
     }));
@@ -40,7 +44,7 @@
   loadBackground('male'); loadBackground('female');
   const gender = () => document.querySelector('[name=gender]:checked').value;
   const count = value => Array.from(value).length;
-  function status(message, error = false) { $('status').textContent = message; $('status').classList.toggle('error', error); }
+  function status(message, error = false) { for (const id of ['status', 'previewStatus']) { $(id).textContent = message; $(id).classList.toggle('error', error); } }
   function ageFromYear(value, now = new Date()) {
     if (!/^\d{4}$/.test(value) || Number(value) < 1900) throw new Error('请选择 1900 年以后的有效出生年份。');
     if (Number(value) > now.getFullYear()) throw new Error('出生年份不能晚于当前年份。');
@@ -64,12 +68,30 @@
     document.body.classList.toggle('female', gender() === '女');
     $('themeLabel').textContent = gender() === '女' ? '她的资料 · 粉色' : '他的资料 · 蓝色';
     $('eduOther').hidden = $('edu').value !== '其他';
-    for (const id of ['family', 'review', 'match']) {
-      const n = count($(id).value); $(id + 'Count').textContent = `已输入 ${n}/100`;
-      $(id + 'Count').classList.toggle('over', n > 100); $(id).setAttribute('aria-invalid', n > 100 ? 'true' : 'false');
+    for (const [id, spec] of Object.entries(PROSE)) {
+      const n = count($(id).value), capacity = proseCapacity(spec);
+      $(id + 'Count').textContent = `已输入 ${n} 字 · 建议约 ${capacity} 字以内，最多 ${spec.lines} 行`;
+      const overflow = wrap($(id).value, spec.width, 24).length > spec.lines;
+      $(id + 'Count').classList.toggle('over', overflow);
+      $(id).setAttribute('aria-invalid', overflow ? 'true' : 'false');
     }
   }
-  function changed() { state.revision++; if (state.number && $('memberName').value.trim() !== state.assignedName) { state.number = null; state.assignedName = ''; } sync(); if (!state.busy) status('资料已更新，点击“生成并下载 PNG”即可下载最新卡片。'); syncNumber(); }
+  function proseCapacity(spec) { font(24); return Math.floor(spec.width / ctx.measureText('汉').width) * spec.lines; }
+  function invalidateMask(clearChoice = false) {
+    state.mask = null; state.privacyToken++; avatarLoading = false;
+    if (clearChoice) { state.privacy = ''; state.avatar = null; $('maskSize').value = 300; $('maskSizeValue').value = '300 px'; }
+    state.preview = null;
+  }
+  let lastName = '', lastGender = '男';
+  function changed() {
+    state.revision++; state.preview = null;
+    const name = $('memberName').value.trim(), sex = gender();
+    if (name !== lastName) invalidateMask(true);
+    else if (sex !== lastGender) { invalidateMask(); state.avatar = null; }
+    if (state.number && name !== state.assignedName) { state.number = null; state.assignedName = ''; }
+    lastName = name; lastGender = sex;
+    sync(); if (!state.busy) status('资料已更新，点击“生成卡片”检查最终效果。'); syncNumber();
+  }
   function fieldError(id, message) { $(id).setAttribute('aria-invalid', 'true'); (id === 'photo' ? $('uploadPhoto') : $(id)).focus(); throw new Error(message); }
   function data() {
     for (const el of document.querySelectorAll('[aria-invalid]')) el.removeAttribute('aria-invalid');
@@ -79,10 +101,11 @@
     const height = Number($('height').value);
     if (!Number.isInteger(height) || height < 100 || height > 230) fieldError('height', '请填写 100–230 之间的整数身高（cm）。');
     const result = { gender: gender(), birth: $('birth').value, age, height };
-    for (const [id, title, limit] of [['ethnic', '民族', 12], ['job', '工作', 24], ['income', '月收入', 24], ['assets', '资产', 30], ['family', '家庭情况', 100], ['review', '红娘评价', 100], ['match', '择偶要求', 100]]) {
+    for (const [id, title, limit] of [['ethnic', '民族', 12], ['job', '工作', 24], ['income', '月收入', 24], ['assets', '资产', 30]]) {
       if (count($(id).value) > limit) fieldError(id, `${title}最多 ${limit} 个字符，当前 ${count($(id).value)} 个。请修改后再生成。`);
       result[id] = $(id).value.trim();
     }
+    for (const id of Object.keys(PROSE)) result[id] = $(id).value.trim();
     result.marital = $('marital').value;
     result.edu = $('edu').value === '其他' ? $('eduOther').value.trim() : $('edu').value;
     if (!result.edu || count(result.edu) > 16) fieldError('eduOther', '请填写其他学历，最多 16 个字符。');
@@ -139,7 +162,7 @@
     const file = $('photo').files[0];
     if (!file) return; // Canceling the picker must preserve the existing photo.
     const token = ++state.photoToken;
-    release(state.photo); state.photo = null; state.photoError = ''; changed();
+    invalidateMask(); release(state.photo); state.photo = null; state.photoError = ''; changed();
     state.transform = { zoom: 1, x: 0, y: 0 }; drawCrop();
     $('uploadPhoto').textContent = '更换照片';
     photoMessage('正在读取图片…'); state.pending++; $('generate').disabled = true;
@@ -203,72 +226,54 @@
     lines.forEach((line, index) => text(line, x, y + index * lineHeight, size, color, weight));
   }
   function round(x, y, w, h, radius, color) { ctx.fillStyle = color; ctx.beginPath(); ctx.roundRect(x, y, w, h, radius); ctx.fill(); }
-  function gradient(x, y, x2, y2, stops) { const g = ctx.createLinearGradient(x, y, x2, y2); stops.forEach(([p, c]) => g.addColorStop(p, c)); return g; }
-  function heart(x, y, size, color) {
-    ctx.save(); ctx.translate(x, y); ctx.scale(size / 32, size / 32); ctx.fillStyle = color; ctx.beginPath();
-    ctx.moveTo(16, 29); ctx.bezierCurveTo(10, 23, -4, 13, 3, 5); ctx.bezierCurveTo(8, 0, 14, 3, 16, 8); ctx.bezierCurveTo(20, 0, 27, 1, 30, 6); ctx.bezierCurveTo(36, 14, 22, 25, 16, 29); ctx.fill(); ctx.restore();
-  }
-  function person(x, y, color) { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, 7, 0, 2 * Math.PI); ctx.fill(); ctx.beginPath(); ctx.ellipse(x, y + 19, 13, 12, 0, Math.PI, 2 * Math.PI); ctx.fill(); }
-  function panel(box, theme) {
-    round(box.x, box.y, box.w, box.h, 16, theme.panel);
-    ctx.strokeStyle = '#ffffffd9'; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.roundRect(box.x + .5, box.y + .5, box.w - 1, box.h - 1, 16); ctx.stroke();
-  }
-  function sectionTitle(title, box, theme, number) {
-    const x = box.x + 12, y = box.y + 7;
-    round(x, y, 240, 36, 18, gradient(x, y, x + 240, y, [[0, theme.mid], [1, theme.accent]]));
-    if (number) person(x + 22, y + 10, '#fff'); else heart(x + 10, y + 7, 24, '#fff');
-    text(title, x + 45, y + 1, 30, '#fff', 700);
-    if (number) text('编号 ' + number, box.x + box.w - 24, y + 5, 25, theme.deep, 600, 'right');
-    else {
-      ctx.strokeStyle = theme.soft; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(x + 258, y + 18); ctx.lineTo(box.x + box.w - 42, y + 18); ctx.stroke();
-      heart(box.x + box.w - 32, y + 9, 18, theme.mid);
-    }
-  }
   function layoutCard(d) {
-    const left = [['出生年份', d.birth + '年'], ['年龄', `约${d.age}岁`], ['民族', d.ethnic], ['婚姻状况', d.marital], ['身高', `${d.height} cm`]];
+    const left = [['出生年份', d.birth + '年'], ['身高', `${d.height} cm`], ['民族', d.ethnic], ['婚姻状况', d.marital]];
     const right = [['学历', d.edu], ['工作', d.job], ['月收入', d.income], ['资产', d.assets]];
     const rows = [];
-    for (const [entries, x, w, h] of [[left, 48, 370, 39], [right, 430, 374, 48.75]]) {
+    for (const [entries, x] of [[left, 717], [right, 1056]]) {
       entries.forEach(([label, value], i) => {
-        const lines = measuredLines(value, w - 133, h - 7, 26, 28, label, 600);
-        rows.push({ label, lines, x, y: 266 + i * h, w, h });
+        const lines = measuredLines(value, 207, 36, 27, 36, label, 500);
+        rows.push({ label, lines, x, y: 290 + i * 44 });
       });
     }
-    const f = LAYOUT.family;
-    const family = measuredLines(d.family, f.w, f.h, 22, 29, '家庭情况');
-    const sections = [['红娘评价', d.review, LAYOUT.review], ['择偶要求', d.match, LAYOUT.match]].map(([title, value, box]) => ({
-      title, box, lines: measuredLines(value, box.w - 40, 132, 24, 32.5, title)
-    }));
-    return { rows, family, sections };
+    const sections = Object.entries(PROSE).map(([id, spec]) => {
+      const lines = wrap(d[id], spec.width, 24);
+      if (lines.length > spec.lines) fieldError(id, `${spec.title}内容超出可读排版空间（最多 ${spec.lines} 行），请减少换行或精简文字。`);
+      return { id, title: spec.title, box: LAYOUT[id], lines };
+    });
+    return { rows, sections };
   }
-  function renderCard(d, transform, theme, background, layout) {
-    // Background assets already contain the brand, slogans, waves and boat. Never redraw them.
+  function paintMask(target, theme, mask, avatar) {
+    if (!mask || !avatar) return;
+    const { x, y, size } = mask;
+    target.save(); target.beginPath(); target.rect(0, 0, PW, PH); target.clip();
+    // An opaque disk is the actual privacy cover; transparent hair edges alone are insufficient.
+    target.fillStyle = theme.pale; target.beginPath(); target.arc(x, y, size / 2, 0, Math.PI * 2); target.fill();
+    target.drawImage(avatar, x - size / 2, y - size / 2, size, size); target.restore();
+  }
+  function renderCard(d, transform, theme, background, layout, privacy = state.privacy, mask = state.mask, avatar = state.avatar) {
     ctx.clearRect(0, 0, W, H); ctx.imageSmoothingQuality = 'high'; ctx.drawImage(background, 0, 0, W, H);
     const p = LAYOUT.photo; paintPhoto(photoCtx, { ...transform });
-    ctx.save();
-    // Restrict shadow to the working area, keeping the original branding and footer untouched.
-    ctx.beginPath(); ctx.rect(828, 208, 592, 420); ctx.clip();
-    ctx.shadowColor = '#173c5c26'; ctx.shadowBlur = 10; ctx.shadowOffsetY = 3;
-    round(p.x, p.y, p.w, p.h, 16, '#fff'); ctx.restore();
-    ctx.save(); ctx.beginPath(); ctx.roundRect(p.x, p.y, p.w, p.h, 16); ctx.clip();
-    ctx.fillStyle = theme.pale; ctx.fillRect(p.x, p.y, p.w, p.h);
-    ctx.drawImage(photoLayer, p.x, p.y); ctx.restore();
-    ctx.strokeStyle = '#fffffff0'; ctx.lineWidth = 4;
-    ctx.beginPath(); ctx.roundRect(p.x + 2, p.y + 2, p.w - 4, p.h - 4, 14); ctx.stroke();
-    panel(LAYOUT.info, theme); sectionTitle(theme.title, LAYOUT.info, theme, d.number);
+    if (privacy === 'cover') paintMask(photoCtx, theme, mask, avatar);
+    ctx.save(); ctx.shadowColor = theme.border + '3b'; ctx.shadowBlur = 30; ctx.shadowOffsetY = 12;
+    round(40, 184, 624, 832, 26, '#fffffff5'); ctx.restore();
+    ctx.strokeStyle = theme.border; ctx.lineWidth = 3; ctx.beginPath(); ctx.roundRect(41.5, 185.5, 621, 829, 24.5); ctx.stroke();
+    ctx.save(); ctx.beginPath(); ctx.roundRect(p.x, p.y, p.w, p.h, 20); ctx.clip(); ctx.drawImage(photoLayer, p.x, p.y); ctx.restore();
+    round(688, 184, 712, 832, 24, '#ffffffdb');
+    ctx.strokeStyle = theme.border + '38'; ctx.lineWidth = 1; ctx.beginPath(); ctx.roundRect(688.5, 184.5, 711, 831, 23.5); ctx.stroke();
+    text(theme.title, 717, 213 + 6, 36, theme.accent, 700);
+    text(d.number ? '编号 ' + d.number : '编号待保存', 1371, 219 + 4.5, 27, theme.accent, 500, 'right');
+    round(717, 275, 654, 1, 0, theme.soft);
     for (const row of layout.rows) {
-      const { label, lines, x, y, w, h } = row;
-      round(x, y, w, h - 4, 9, theme.pale); round(x, y, 113, h - 4, 9, theme.soft);
-      text(label, x + 12, y + (h - 4 - 24) / 2, 24, theme.deep, 600);
-      drawLines(lines, x + 124, y + (h - 4 - lines.length * 28) / 2, 26, 28, '#17263b', 600);
+      text(row.label, row.x, row.y + 6.5, 23, theme.muted);
+      drawLines(row.lines, row.x + 108, row.y + 4.5, 27, 36, theme.ink, 500);
     }
-    round(48, 467, 756, 149, 10, theme.pale);
-    text('家庭情况', 62, 470, 23, theme.deep, 600); text('年龄按年份估算', 790, 473, 16, '#506176', 400, 'right');
-    drawLines(layout.family, LAYOUT.family.x, LAYOUT.family.y, 22, 29);
     for (const section of layout.sections) {
-      panel(section.box, theme); sectionTitle(section.title, section.box, theme);
-      drawLines(section.lines, section.box.x + 20, section.box.y + 51, 24, 32.5);
+      const family = section.id === 'family', { x, y, w, h } = section.box;
+      if (family) round(x, y, w, h, 16, theme.pale);
+      const tx = x + (family ? 18 : 0), ty = y + (family ? 16 : 0);
+      text(section.title, tx, ty + 4, 26, theme.accent, 700);
+      drawLines(section.lines, tx, ty + 42 + 6, 24, 36, theme.ink);
     }
     return canvas;
   }
@@ -328,7 +333,7 @@
     try {
       const record = readCounter(), exhausted = record.next > 9999;
       badge.textContent = state.number ? formatNumber(state.number) : exhausted ? '编号已用完' : '待生成';
-      badge.title = state.number ? '当前资料编号' : exhausted ? '编号已达到 ' + formatNumber(9999) : '成功生成后分配编号';
+      badge.title = state.number ? '当前资料编号' : exhausted ? '编号已达到 ' + formatNumber(9999) : '首次保存下载时分配编号';
       badge.classList.toggle('error', exhausted && !state.number);
     } catch (error) {
       badge.textContent = state.number ? formatNumber(state.number) : '编号不可用';
@@ -336,62 +341,171 @@
       status(error.message, true);
     }
   }
+  const avatarCache = new Map();
+  const editor = $('maskEditor'), editorCtx = editor.getContext('2d');
+  let avatarLoading = false, maskDrag = null;
+  function loadAvatar(key) {
+    if (!avatarCache.has(key)) avatarCache.set(key, new Promise((resolve, reject) => {
+      const source = window.TONGZHOU_AVATARS?.[key], image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => { avatarCache.delete(key); reject(new Error('卡通头像加载失败，请重试或明确选择保留原照。')); };
+      if (!source) { reject(new Error('卡通头像资源缺失，请重试或明确选择保留原照。')); return; }
+      image.src = source;
+    }));
+    return avatarCache.get(key);
+  }
+  function controls() {
+    const covered = state.privacy === 'cover';
+    $('generate').disabled = state.busy || state.pending > 0;
+    $('generate').textContent = state.busy ? '正在处理…' : '生成卡片';
+    $('saveCard').disabled = state.busy || avatarLoading || !state.preview || !state.privacy || (covered && (!state.mask || !state.avatar));
+    $('saveCard').textContent = state.busy ? '正在处理…' : '保存下载';
+    $('backToEdit').disabled = state.busy;
+    $('privacyChoices').disabled = state.busy;
+    $('maskControls').hidden = !covered;
+    $('maskSize').disabled = state.busy || avatarLoading || !state.mask;
+    $('repositionMask').disabled = state.busy || !state.mask;
+    $('avatarLabel').textContent = gender() === '女' ? '使用女生卡通头像' : '使用男生卡通头像';
+    editor.classList.toggle('cover-mode', covered);
+    editor.tabIndex = covered ? 0 : -1;
+    for (const radio of document.querySelectorAll('[name=privacy]')) radio.checked = radio.value === state.privacy;
+    if (state.mask) { $('maskSize').value = state.mask.size; $('maskSizeValue').value = Math.round(state.mask.size) + ' px'; }
+  }
+  function showView(view) {
+    state.view = view;
+    $('cardForm').hidden = view === 'preview'; $('previewPage').hidden = view !== 'preview';
+    document.body.classList.toggle('previewing', view === 'preview');
+    controls();
+  }
+  function updatePreview() {
+    if (!state.preview) return;
+    const { d, transform, theme, background, layout } = state.preview;
+    d.number = state.number ? formatNumber(state.number) : null;
+    renderCard(d, transform, theme, background, layout);
+    previewCtx.clearRect(0, 0, W, H); previewCtx.drawImage(canvas, 0, 0);
+    editorCtx.clearRect(0, 0, W, H);
+    if (state.privacy === 'cover' && state.mask) {
+      const m = state.mask; editorCtx.strokeStyle = theme.accent; editorCtx.lineWidth = 3; editorCtx.setLineDash([8, 6]);
+      editorCtx.save(); editorCtx.beginPath(); editorCtx.rect(LAYOUT.photo.x, LAYOUT.photo.y, PW, PH); editorCtx.clip();
+      editorCtx.beginPath(); editorCtx.arc(LAYOUT.photo.x + m.x, LAYOUT.photo.y + m.y, m.size / 2, 0, Math.PI * 2); editorCtx.stroke(); editorCtx.restore();
+    }
+    controls();
+  }
+  async function selectPrivacy(value) {
+    if (state.busy) return;
+    state.privacy = value; state.revision++; const token = ++state.privacyToken;
+    avatarLoading = value === 'cover' && !state.avatar; controls(); updatePreview();
+    if (avatarLoading) status('正在读取卡通头像…');
+    if (value === 'original') { status('已保留原照，确认卡片后点击保存下载。'); return; }
+    try {
+      if (!state.avatar) { const avatar = await loadAvatar(themeFor(gender()).key); if (token !== state.privacyToken) return; state.avatar = avatar; }
+      status(state.mask ? '请检查面部已完整遮住，再保存下载。' : '请点击照片中的脸部放置头像，再调整大小。');
+    } catch (error) { if (token === state.privacyToken) status(error.message, true); }
+    finally { if (token === state.privacyToken) { avatarLoading = false; updatePreview(); controls(); } }
+  }
   async function generate(event) {
     event.preventDefault(); if (state.busy || state.pending) return;
-    state.busy = true; $('generate').disabled = true; $('generate').textContent = '正在生成…';
-    const revision = state.revision;
+    state.busy = true; controls(); const revision = state.revision;
     try {
       syncBirthYears(); const d = data(); await document.fonts.ready;
       const theme = themeFor(d.gender), background = await loadBackground(theme.key);
-      if (!background) throw new Error('当前主题底图加载失败，请完整解压工具文件后重试。');
+      if (!background) throw new Error('当前主题底图加载失败，请检查工具资源后重试。');
       const layout = layoutCard(d);
+      if (revision !== state.revision) throw new Error('资料已变化，请重新点击生成。');
+      state.preview = { d, transform: { ...state.transform }, theme, background, layout, revision };
+      updatePreview(); showView('preview');
+      if (history.state?.cardView !== 'preview') history.pushState({ cardView: 'preview' }, '');
+      $('previewTitle').focus(); window.scrollTo(0, 0);
+      status(state.privacy ? '请检查卡片内容后保存下载。' : '请选择卡通遮挡或保留原照。');
+    } catch (error) { status(error.message || '生成失败，请检查资料。', true); }
+    finally { state.busy = false; controls(); }
+    if (state.view === 'preview' && state.privacy === 'cover') await selectPrivacy('cover');
+  }
+  async function saveCard() {
+    if ($('saveCard').disabled || state.busy || !state.preview) return;
+    state.busy = true; controls(); const revision = state.revision;
+    const snap = state.preview, d = { ...snap.d }, mask = state.mask && { ...state.mask }, privacy = state.privacy, avatar = state.avatar;
+    try {
+      if (privacy === 'cover' && (!mask || !avatar)) throw new Error('请先放置卡通头像。');
       let blob = null, assigned = false;
       for (let attempt = 0; attempt < 8; attempt++) {
-        if (revision !== state.revision) throw new Error('资料已变化，请重新点击生成。');
-        const existing = state.number;
-        const candidate = existing || readCounter().next;
+        if (revision !== state.revision) throw new Error('资料已变化，请返回修改后重新生成。');
+        const existing = state.number, candidate = existing || readCounter().next;
         if (candidate > 9999) throw new Error('编号已达到 ' + formatNumber(9999) + '，不能继续分配新编号。');
         d.number = formatNumber(candidate);
-        renderCard(d, { ...state.transform }, theme, background, layout);
+        renderCard(d, snap.transform, snap.theme, snap.background, snap.layout, privacy, mask, avatar);
         blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
         if (!blob) throw new Error('图片生成失败，请重新尝试。');
-        if (revision !== state.revision) throw new Error('资料已变化，请重新点击生成。');
+        if (revision !== state.revision) throw new Error('资料已变化，请返回修改后重新生成。');
         if (existing) { assigned = true; break; }
         assigned = await withCounterLock(() => {
-          if (revision !== state.revision) throw new Error('资料已变化，请重新点击生成。');
-          const record = readCounter();
-          if (record.next !== candidate) return false; // Another window issued first; render with the new number.
+          if (revision !== state.revision) throw new Error('资料已变化，请返回修改后重新生成。');
+          const record = readCounter(); if (record.next !== candidate) return false;
           writeCounter({ version: 1, next: candidate + 1, lastIssued: candidate });
-          state.number = candidate; state.assignedName = $('memberName').value.trim();
-          return true;
+          state.number = candidate; state.assignedName = $('memberName').value.trim(); return true;
         });
         if (assigned) break;
       }
       if (!assigned) throw new Error('其他窗口正在分配编号，请稍后重试。');
       syncNumber();
-      if (revision !== state.revision) throw new Error('资料已变化，请重新点击生成。');
+      if (revision !== state.revision) throw new Error('资料已变化，请返回修改后重新生成。');
+      // Copy the exact exported canvas: preview and downloaded image share the final pixels.
+      snap.d.number = d.number; previewCtx.clearRect(0, 0, W, H); previewCtx.drawImage(canvas, 0, 0);
       const date = new Date(), pad = n => String(n).padStart(2, '0');
       const stamp = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}_${pad(date.getHours())}${pad(date.getMinutes())}`;
       const url = URL.createObjectURL(blob), link = document.createElement('a');
       link.href = url; link.download = `同舟婚恋_会员卡片_${d.number}_${d.gender}_${stamp}.png`; document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 30000);
-      status(`已生成 ${d.number} · 1440 × 1080 PNG，并发起下载。请在浏览器下载列表中查看。`);
-    } catch (error) { syncNumber(); status(error.message || '生成失败，请检查资料后重试。', true); }
-    finally { state.busy = false; $('generate').disabled = state.pending > 0; $('generate').textContent = '生成并下载 PNG'; }
+      status(`已生成 ${d.number} · 1440 × 1080 PNG，并发起下载。可在浏览器下载列表中查看。`);
+    } catch (error) { syncNumber(); status(error.message || '保存失败，请重试。', true); }
+    finally { state.busy = false; controls(); }
   }
+  $('saveCard').onclick = saveCard;
+  $('backToEdit').onclick = () => { if (state.busy) return; showView('edit'); history.replaceState({ cardView: 'edit' }, ''); $('generate').focus(); };
+  window.addEventListener('popstate', () => {
+    if (state.busy) state.revision++;
+    const canPreview = history.state?.cardView === 'preview' && state.preview && state.photo;
+    showView(canPreview ? 'preview' : 'edit'); if (canPreview) updatePreview();
+  });
+  history.replaceState({ cardView: 'edit' }, '');
+  for (const radio of document.querySelectorAll('[name=privacy]')) radio.onchange = () => selectPrivacy(radio.value);
+  function maskPoint(event) {
+    const rect = editor.getBoundingClientRect();
+    return { x: (event.clientX - rect.left) * W / rect.width - LAYOUT.photo.x, y: (event.clientY - rect.top) * H / rect.height - LAYOUT.photo.y };
+  }
+  function moveMask(x, y) {
+    state.mask.x = Math.max(0, Math.min(PW, x)); state.mask.y = Math.max(0, Math.min(PH, y));
+    state.revision++; updatePreview(); status('请检查面部已完整遮住，再保存下载。');
+  }
+  editor.onpointerdown = event => {
+    if (state.busy || avatarLoading || state.privacy !== 'cover' || !state.avatar || event.button !== 0) return;
+    const pt = maskPoint(event); if (pt.x < 0 || pt.x > PW || pt.y < 0 || pt.y > PH) return;
+    editor.setPointerCapture(event.pointerId);
+    if (!state.mask || Math.hypot(pt.x - state.mask.x, pt.y - state.mask.y) > state.mask.size / 2) state.mask = { ...pt, size: Number($('maskSize').value) };
+    maskDrag = { dx: pt.x - state.mask.x, dy: pt.y - state.mask.y }; moveMask(state.mask.x, state.mask.y);
+  };
+  editor.onpointermove = event => { if (maskDrag && !state.busy && state.mask) { const pt = maskPoint(event); moveMask(pt.x - maskDrag.dx, pt.y - maskDrag.dy); } };
+  for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) editor.addEventListener(name, () => { maskDrag = null; });
+  editor.onkeydown = event => {
+    if (state.busy || !state.mask || state.privacy !== 'cover' || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+    event.preventDefault(); const n = event.shiftKey ? 20 : 3;
+    moveMask(state.mask.x + (event.key === 'ArrowLeft' ? -n : event.key === 'ArrowRight' ? n : 0), state.mask.y + (event.key === 'ArrowUp' ? -n : event.key === 'ArrowDown' ? n : 0));
+  };
+  $('maskSize').oninput = () => { if (!state.busy && state.mask) { state.mask.size = Number($('maskSize').value); state.revision++; updatePreview(); } };
+  $('repositionMask').onclick = () => { if (!state.busy) { state.mask = null; state.revision++; updatePreview(); status('请重新点击照片中的脸部放置头像。'); } };
   $('cardForm').addEventListener('submit', generate);
   $('cardForm').addEventListener('input', event => { if (event.target.type !== 'file') changed(); });
   $('photo').addEventListener('change', uploadPhoto);
   $('uploadPhoto').onclick = () => $('photo').click();
-  $('zoom').addEventListener('input', () => { state.transform.zoom = Number($('zoom').value) / 100; drawCrop(); });
-  $('centerPhoto').onclick = () => { state.transform.x = 0; state.transform.y = 0; changed(); drawCrop(); };
-  $('resetPhoto').onclick = () => { state.transform = { zoom: 1, x: 0, y: 0 }; changed(); drawCrop(); };
+  $('zoom').addEventListener('input', () => { invalidateMask(); state.transform.zoom = Number($('zoom').value) / 100; drawCrop(); });
+  $('centerPhoto').onclick = () => { invalidateMask(); state.transform.x = 0; state.transform.y = 0; changed(); drawCrop(); };
+  $('resetPhoto').onclick = () => { invalidateMask(); state.transform = { zoom: 1, x: 0, y: 0 }; changed(); drawCrop(); };
   let drag = null;
   crop.addEventListener('pointerdown', event => { if (!state.photo) return; crop.setPointerCapture(event.pointerId); drag = { x: event.clientX, y: event.clientY }; });
-  crop.addEventListener('pointermove', event => { if (!drag || !state.photo) return; const rect = crop.getBoundingClientRect(); state.transform.x += (event.clientX - drag.x) * PW / rect.width; state.transform.y += (event.clientY - drag.y) * PH / rect.height; drag = { x: event.clientX, y: event.clientY }; changed(); drawCrop(); });
+  crop.addEventListener('pointermove', event => { if (!drag || !state.photo) return; invalidateMask(); const rect = crop.getBoundingClientRect(); state.transform.x += (event.clientX - drag.x) * PW / rect.width; state.transform.y += (event.clientY - drag.y) * PH / rect.height; drag = { x: event.clientX, y: event.clientY }; changed(); drawCrop(); });
   for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) crop.addEventListener(name, () => { drag = null; });
-  crop.addEventListener('keydown', event => { if (!state.photo || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return; event.preventDefault(); const step = event.shiftKey ? 20 : 3; state.transform.x += event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0; state.transform.y += event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0; changed(); drawCrop(); });
+  crop.addEventListener('keydown', event => { if (!state.photo || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return; event.preventDefault(); invalidateMask(); const step = event.shiftKey ? 20 : 3; state.transform.x += event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0; state.transform.y += event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0; changed(); drawCrop(); });
   $('reset').onclick = () => {
-    state.photoToken++; release(state.photo); state.photo = null; state.photoError = ''; state.number = null; state.assignedName = '';
+    invalidateMask(true); avatarLoading = false; state.photoToken++; release(state.photo); state.photo = null; state.photoError = ''; state.number = null; state.assignedName = '';
     state.transform = { zoom: 1, x: 0, y: 0 }; HTMLFormElement.prototype.reset.call($('cardForm'));
     photoMessage(); $('uploadPhoto').textContent = '上传照片';
     for (const el of document.querySelectorAll('[aria-invalid]')) el.removeAttribute('aria-invalid');
