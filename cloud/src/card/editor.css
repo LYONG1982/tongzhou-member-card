@@ -15,3 +15,5 @@
 
 }
 .card-editor{--accent:#1767ac;--deep:#123e69;--soft:#eaf4ff;--border:#d5e3ef;--ink:#17263b;--muted:#506176;--bg:#f1f6fb;--focus:#3c86c5;}
+
+.card-editor .live-card-panel canvas{display:block;width:100%;height:auto;aspect-ratio:4/3;margin-top:16px}.card-editor .live-card-panel canvas[hidden]{display:none}.card-editor #saveDownload{width:100%;margin-top:12px}

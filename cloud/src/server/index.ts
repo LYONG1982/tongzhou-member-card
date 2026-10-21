@@ -1,20 +1,21 @@
 import {Hono} from 'hono';
-import {getCookie,setCookie,deleteCookie} from 'hono/cookie';
+import {getCookie,deleteCookie} from 'hono/cookie';
 import {bodyLimit} from 'hono/body-limit';
 import {HTTPException} from 'hono/http-exception';
-import {drizzle} from 'drizzle-orm/d1';
-import {and,eq,gt} from 'drizzle-orm';
-import {accessSessions} from '../db/schema';
 import {z,ZodError} from 'zod';
 import {cleanup} from './cleanup';
+import {publicAccounts,privateAccounts,publicRole} from './accounts';
+import {serviceRoutes} from './service-records';
+import {photoSourceRoutes} from './photo-sources';
+import {adminMemberRoutes} from './admin-members';
+import {numberFor} from './common';
 import type {Env,User} from './types';
-import {digest,token,verifyPassword} from './crypto';
+import {digest} from './crypto';
 import {uuid,gender,draftInput,confirmInput,imageInfo} from './validation';
 const app=new Hono<Env>();
 const now=()=>Date.now();
 function fail(status:400|401|403|404|409|410|413|429|503,message:string):never {throw new HTTPException(status,{message});}
 const cookieName='tz_session';
-const workspaceUser:User={id:'00000000-0000-4000-8000-000000000002',username:'workspace.internal',displayName:'共享工作台',role:'admin',active:1};
 app.use('*',async(c,next)=>{
  c.header('X-Content-Type-Options','nosniff');c.header('Referrer-Policy','no-referrer');c.header('X-Frame-Options','DENY');
  c.header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
@@ -28,28 +29,25 @@ async function rate(c:any,bucket:string,key:string,max:number,seconds=900){
  const row=await c.env.DB.prepare(`INSERT INTO limits(key,count,expires_at) VALUES (?,1,?) ON CONFLICT(key) DO UPDATE SET count=CASE WHEN expires_at<? THEN 1 ELSE count+1 END,expires_at=CASE WHEN expires_at<? THEN excluded.expires_at ELSE expires_at END RETURNING count`).bind(k,expiry,now(),now()).first();
  if(Number(row?.count)>max){c.header('Retry-After',String(seconds));fail(429,'操作过于频繁，请稍后重试');}
 }
-async function accessVersion(c:any){if(!c.env.ACCESS_CODE_HASH)fail(503,'入口尚未配置，请稍后重试');return digest(c.env.ACCESS_CODE_HASH);}
-app.get('/api/status',c=>c.json({configured:!!c.env.ACCESS_CODE_HASH,version:'2.1.0'}));
-app.post('/api/login',async c=>{
- const b=z.object({code:z.string().min(1).max(128)}).strict().parse(await json(c));
- await rate(c,'access-login',c.req.header('CF-Connecting-IP')||'local',30);
- const version=await accessVersion(c);
- if(!verifyPassword(b.code,c.env.ACCESS_CODE_HASH!))fail(401,'访问码不正确，请重新输入');
- const raw=token();await c.env.DB.prepare('INSERT INTO access_sessions(hash,access_version,expires_at) VALUES (?,?,?)').bind(await digest(raw),version,now()+8*3600000).run();
- setCookie(c,cookieName,raw,{path:'/',httpOnly:true,secure:c.env.ENVIRONMENT!=='local',sameSite:'Strict',maxAge:8*3600});
- return c.json({ok:true});
-});
+app.get('/api/status',c=>c.json({configured:true,version:'2.2.0'}));
+app.post('/api/login',c=>c.json({error:'共享访问码已停用，请使用个人账号登录'},410));
+publicAccounts(app);
 app.use('/api/*',async(c,next)=>{
- const raw=getCookie(c,cookieName);if(!raw||!/^[a-f0-9]{64}$/.test(raw))fail(401,'请输入访问码');
- const hash=await digest(raw),version=await accessVersion(c);
- const session=await drizzle(c.env.DB).select({hash:accessSessions.hash}).from(accessSessions).where(and(eq(accessSessions.hash,hash),eq(accessSessions.accessVersion,version),gt(accessSessions.expiresAt,now()))).get();
- if(!session)fail(401,'访问已过期，请重新输入访问码');
- c.set('user',workspaceUser);c.set('sessionHash',hash);await next();
+ const personalRaw=getCookie(c,'tz_personal');
+ if(personalRaw){
+  const h=await digest(personalRaw);const u=await c.env.DB.prepare('SELECT u.id,u.username,u.display_name AS displayName,u.role,u.active FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.hash=? AND s.expires_at>? AND u.active=1 AND u.password_hash IS NOT NULL').bind(h,now()).first<User>();
+  if(!u)fail(401,'个人登录已过期或账号已停用，请重新登录');
+  c.set('user',{...u,role:publicRole(u.role)});c.set('sessionHash',h);c.set('authKind','personal');await next();return;
+ }
+ fail(401,'请使用个人账号登录');
 });
-app.get('/api/me',c=>c.json({ok:true}));
-app.post('/api/logout',async c=>{await c.env.DB.prepare('DELETE FROM access_sessions WHERE hash=?').bind(c.get('sessionHash')).run();deleteCookie(c,cookieName,{path:'/'});return c.json({ok:true});});
-const numberFor=(n:number)=>'TZ-'+String(n).padStart(6,'0');
-async function member(c:any,id:string){uuid.parse(id);const m=await c.env.DB.prepare('SELECT m.*,u.display_name AS owner_name FROM members m JOIN users u ON u.id=m.owner_id WHERE m.id=?').bind(id).first();if(!m)fail(404,'会员记录不存在');return m;}
+app.get('/api/me',c=>c.json({ok:true,user:c.get('user'),authKind:c.get('authKind')}));
+privateAccounts(app);
+adminMemberRoutes(app);
+serviceRoutes(app);
+photoSourceRoutes(app);
+app.post('/api/logout',async c=>{await c.env.DB.batch([c.env.DB.prepare('DELETE FROM access_sessions WHERE hash=?').bind(c.get('sessionHash')),c.env.DB.prepare('DELETE FROM sessions WHERE hash=?').bind(c.get('sessionHash'))]);deleteCookie(c,cookieName,{path:'/'});deleteCookie(c,'tz_personal',{path:'/'});return c.json({ok:true});});
+async function member(c:any,id:string){uuid.parse(id);const m=await c.env.DB.prepare('SELECT m.*,u.display_name AS owner_name FROM members m JOIN users u ON u.id=m.owner_id WHERE m.id=? AND m.archived=0').bind(id).first();if(!m)fail(404,'会员记录不存在');return m;}
 function writable(_c:any,m:any){if(m.archived)fail(409,'此历史记录暂不可修改');}
 function cleanMember(m:any){return {id:m.id,number:numberFor(m.seq),ownerId:m.owner_id,ownerName:m.owner_name,gender:m.gender,profile:JSON.parse(m.profile),editor:JSON.parse(m.editor),photoId:m.photo_id,version:m.version,status:m.status,archived:!!m.archived,confirmedId:m.confirmed_id,createdAt:m.created_at,updatedAt:m.updated_at};}
 async function priorOperation(c:any,id:string,memberId:string,hash:string){const op=await c.env.DB.prepare('SELECT * FROM operations WHERE id=?').bind(id).first();if(!op)return null;if(op.member_id!==memberId||op.actor_id!==c.get('user').id||op.digest!==hash)fail(409,'请求标识已被不同操作使用');return JSON.parse(op.result);}
@@ -65,17 +63,17 @@ app.post('/api/members',async c=>{
  const row=await c.env.DB.prepare('SELECT id FROM members WHERE owner_id=? AND request_key=?').bind(user.id,b.requestKey).first<{id:string}>();if(!row)fail(409,'六位编号已用完，请联系管理员');return c.json(cleanMember(await member(c,row.id)),201);
 });
 app.get('/api/members',async c=>{
- const q=z.object({q:z.string().max(64).default(''),gender:z.enum(['','男','女']).default(''),marital:z.enum(['','unmarried','divorced']).default(''),decade:z.enum(['','1970','1980','1990','2000']).default(''),page:z.coerce.number().int().min(1).max(100000).default(1)}).strict().parse(c.req.query());
+ const q=z.object({q:z.string().max(64).default(''),gender:z.enum(['','男','女']).default(''),marital:z.enum(['','unmarried','divorced']).default(''),decade:z.enum(['','1970','1980','1990','2000']).default(''),page:z.coerce.number().int().min(1).max(100000).default(1),pageSize:z.coerce.number().int().refine(v=>v===16||v===24,'每页数量仅支持16或24').default(24)}).strict().parse(c.req.query());
  const conditions=['m.archived=0'],args:(string|number)[]=[];
  if(q.gender){conditions.push("json_extract(s.profile,'$.gender')=?");args.push(q.gender);}
  if(q.marital==='unmarried')conditions.push("json_extract(s.profile,'$.marital')='未婚'");
  if(q.marital==='divorced')conditions.push("json_extract(s.profile,'$.marital') IN ('离异','离异未育','短婚未育','离异有孩（不随身）','离异有孩')");
  if(q.decade){conditions.push("CAST(json_extract(s.profile,'$.birth') AS INTEGER) BETWEEN ? AND ?");args.push(Number(q.decade),Number(q.decade)+9);}
- if(q.q){conditions.push("(json_extract(s.profile,'$.memberName') LIKE ? ESCAPE '\\' OR ('TZ-' || printf('%06d',m.seq)) LIKE ? ESCAPE '\\')");const search='%'+q.q.replace(/[\\%_]/g,'\\$&')+'%';args.push(search,search);}
+ if(q.q){conditions.push("(json_extract(s.profile,'$.memberName') LIKE ? ESCAPE '\\' OR ('TZ-' || printf('%05d',m.seq)) LIKE ? ESCAPE '\\' OR ('TZ-' || printf('%06d',m.seq)) LIKE ? ESCAPE '\\')");const search='%'+q.q.replace(/[\\%_]/g,'\\$&')+'%';args.push(search,search,search);}
  const from=' FROM members m JOIN snapshots s ON s.id=m.confirmed_id AND s.member_id=m.id WHERE '+conditions.join(' AND ');
  const total=await c.env.DB.prepare('SELECT count(*) AS n'+from).bind(...args).first<{n:number}>();
- const rows=await c.env.DB.prepare("SELECT m.id,m.seq,json_extract(s.profile,'$.memberName') AS name,json_extract(s.profile,'$.birth') AS birth,json_extract(s.profile,'$.gender') AS gender,json_extract(s.profile,'$.height') AS height,json_extract(s.profile,'$.edu') AS edu,json_extract(s.profile,'$.marital') AS marital,s.created_at AS updated_at,s.thumb_id,s.card_id"+from+' ORDER BY s.created_at DESC,m.seq DESC LIMIT 24 OFFSET ?').bind(...args,(q.page-1)*24).all<any>();
- return c.json({total:total!.n,page:q.page,pageSize:24,items:rows.results.map(m=>({...m,number:numberFor(m.seq)}))});
+ const rows=await c.env.DB.prepare("SELECT m.id,m.seq,json_extract(s.profile,'$.memberName') AS name,json_extract(s.profile,'$.birth') AS birth,json_extract(s.profile,'$.gender') AS gender,json_extract(s.profile,'$.height') AS height,json_extract(s.profile,'$.edu') AS edu,json_extract(s.profile,'$.marital') AS marital,json_extract(s.profile,'$.ethnic') AS ethnic,s.created_at AS updated_at,s.thumb_id,s.card_id,s.photo_id,json_extract(s.editor,'$.template') AS template,json_extract(s.editor,'$.transform') AS transform"+from+' ORDER BY s.created_at DESC,m.seq DESC LIMIT ? OFFSET ?').bind(...args,q.pageSize,(q.page-1)*q.pageSize).all<any>();
+ return c.json({total:total!.n,page:q.page,pageSize:q.pageSize,items:rows.results.map(m=>({...m,transform:m.transform?JSON.parse(m.transform):null,number:numberFor(m.seq)}))});
 });
 app.get('/api/members/:id',async c=>{
  const m=await member(c,c.req.param('id'));let confirmed=null;
@@ -88,7 +86,7 @@ app.put('/api/members/:id/gender',async c=>{
  const m=await member(c,c.req.param('id'));writable(c,m);const b=z.object({gender,version:z.number().int().min(0)}).parse(await json(c));
  if(m.status!=='draft')fail(409,'请在编辑表单中修改性别并重新生成');
  if(m.gender===b.gender)return c.json(cleanMember(m));
- const r=await c.env.DB.prepare('UPDATE members SET gender=?,version=version+1,updated_at=? WHERE id=? AND version=?').bind(b.gender,now(),m.id,b.version).run();if(!r.meta.changes)fail(409,'记录已更新，请重新打开');return c.json(cleanMember(await member(c,m.id)));
+ const results=await c.env.DB.batch([c.env.DB.prepare('UPDATE members SET gender=?,version=version+1,updated_at=? WHERE id=? AND version=? AND archived=0').bind(b.gender,now(),m.id,b.version),c.env.DB.prepare('INSERT INTO audit(id,actor_id,action,target_id,created_at) SELECT ?,?,?,?,? WHERE changes()>0').bind(crypto.randomUUID(),c.get('user').id,'member.gender',m.id,now())]);if(!results[0].meta.changes)fail(409,'记录已更新，请重新打开');return c.json(cleanMember(await member(c,m.id)));
 });
 app.put('/api/members/:id/media/:mediaId',async c=>{
  const m=await member(c,c.req.param('id'));writable(c,m);const id=uuid.parse(c.req.param('mediaId')),kind=z.enum(['photo','card','thumb']).parse(c.req.query('kind'));
@@ -107,7 +105,7 @@ app.put('/api/members/:id/media/:mediaId',async c=>{
  await c.env.MEDIA.put(key,bytes,{httpMetadata:{contentType:type},customMetadata:{sha256:hash}});
  const r=await c.env.DB.prepare("UPDATE media SET state='ready' WHERE id=? AND state='pending'").bind(id).run();if(!r.meta.changes&&!await c.env.DB.prepare("SELECT id FROM media WHERE id=? AND state='ready'").bind(id).first())fail(409,'上传状态改变，请重试');
  }
- return c.json({id,size:bytes.byteLength,...info});
+ await member(c,m.id);return c.json({id,size:bytes.byteLength,...info});
 });
 app.put('/api/members/:id/draft',async c=>{
  const m=await member(c,c.req.param('id'));writable(c,m);const b=draftInput.parse(await json(c)),hash=await digest(JSON.stringify(b));const old=await priorOperation(c,b.operationId,m.id,hash);if(old)return c.json(old);
@@ -134,7 +132,7 @@ app.post('/api/members/:id/confirm',async c=>{
 });
 app.get('/api/media/:id',async c=>{
  const id=uuid.parse(c.req.param('id'));
- const row=await c.env.DB.prepare("SELECT a.* FROM media a WHERE a.id=? AND a.state='ready' AND (EXISTS(SELECT 1 FROM members m WHERE m.photo_id=a.id) OR EXISTS(SELECT 1 FROM snapshots s WHERE s.photo_id=a.id OR s.card_id=a.id OR s.thumb_id=a.id))").bind(id).first<any>();
+ const row=await c.env.DB.prepare("SELECT a.* FROM media a WHERE a.id=? AND a.state='ready' AND EXISTS(SELECT 1 FROM members owner WHERE owner.id=a.member_id AND owner.archived=0) AND (EXISTS(SELECT 1 FROM members m WHERE m.photo_id=a.id) OR EXISTS(SELECT 1 FROM snapshots s WHERE s.photo_id=a.id OR s.card_id=a.id OR s.thumb_id=a.id))").bind(id).first<any>();
  if(!row)fail(404,'图片尚未关联或已失效');const object=await c.env.MEDIA.get(row.object_key);if(!object)fail(503,'图片暂时无法读取，请稍后重试');
  c.header('Content-Type',row.content_type);c.header('Content-Length',String(object.size));c.header('Cache-Control','private, no-store');return c.body(object.body as any);
 });
@@ -146,6 +144,6 @@ app.get('/api/members/:id/download',async c=>{
  c.header('Content-Type','image/png');c.header('Cache-Control','private, no-store');c.header('Content-Disposition',"attachment; filename=member-card.png; filename*=UTF-8''"+encodeURIComponent(filename));return c.body(object.body as any);
 });
 app.all('/api/*',c=>c.json({error:'接口不存在'},404));
-app.onError((error,c)=>{if(error instanceof ZodError)return c.json({error:error.issues[0]?.message||'输入无效'},400);if(error instanceof HTTPException)return c.json({error:error.message},error.status);console.error('request_failed',error.name);return c.json({error:'服务暂不可用，请稍后重试；当前编辑内容仍保留'},503);});
+app.onError((error,c)=>{if(String(error).includes('member_unavailable'))return c.json({error:'会员不存在或已删除'},404);if(error instanceof ZodError)return c.json({error:error.issues[0]?.message||'输入无效'},400);if(error instanceof HTTPException)return c.json({error:error.message},error.status);console.error('request_failed',error.name);return c.json({error:'服务暂不可用，请稍后重试；当前编辑内容仍保留'},503);});
 app.all('*',c=>c.env.ASSETS.fetch(c.req.raw));
 export default {fetch:app.fetch,scheduled:(_event:ScheduledController,env:Env['Bindings'],ctx:ExecutionContext)=>{ctx.waitUntil(cleanup(env));}};

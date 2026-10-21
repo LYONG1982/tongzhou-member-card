@@ -1,5 +1,5 @@
 export function mountEditor(root, bridge) {
-  let disposed = false;
+  let disposed = false, quietValidation = false, liveTimer = null;
   const $ = id => root.querySelector("#" + id);
   const W = 1440, H = 1080;
   // Figma nodes 2:19 / 2:72; coordinates include the parent border.
@@ -12,7 +12,7 @@ export function mountEditor(root, bridge) {
   });
   const PROSE = { family: { title: '家庭情况', width: 618, lines: 2 }, review: { title: '红娘评价', width: 654, lines: 4 }, match: { title: '择偶要求', width: 654, lines: 3 } };
   const PW = LAYOUT.photo.w, PH = LAYOUT.photo.h;
-  const FONT = '"Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif';
+  const FONT = '"Noto Sans SC", "PingFang SC", sans-serif';
   const MAX_BYTES = 20 * 1024 * 1024, MAX_PIXELS = 50 * 1000 * 1000;
   const state = { photo: null, number: null, manualNumber: null, assignedName: '', transform: { zoom: 1, x: 0, y: 0 }, photoToken: 0, revision: 0, busy: false, pending: 0, photoError: '', privacy: '', mask: null, avatar: null, preview: null, view: 'edit', privacyToken: 0 };
   const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
@@ -76,9 +76,9 @@ export function mountEditor(root, bridge) {
     else if (sex !== lastGender) { invalidateMask(); state.avatar = null; }
 
     lastName = name; lastGender = sex;
-    bridge.dirty(true); sync(); if (!state.busy) status('资料已更新，点击“生成卡片”检查最终效果。'); syncNumber(); if (sex) ensureRecord().catch(e => status(e.message, true));
+    bridge.dirty(true); sync(); if (!state.busy) status('资料已更新，点击“生成卡片”检查最终效果。'); syncNumber(); if (sex) ensureRecord().catch(e => status(e.message, true)); scheduleLive();
   }
-  function fieldError(id, message) { $(id).setAttribute('aria-invalid', 'true'); (id === 'photo' ? $('uploadPhoto') : $(id)).focus(); throw new Error(message); }
+  function fieldError(id, message) { if (quietValidation) throw new Error(message); $(id).setAttribute('aria-invalid', 'true'); (id === 'photo' ? $('uploadPhoto') : $(id)).focus(); throw new Error(message); }
   function data() {
     for (const el of root.querySelectorAll('[aria-invalid]')) el.removeAttribute('aria-invalid');
     const name = $('memberName').value.trim();
@@ -156,7 +156,7 @@ export function mountEditor(root, bridge) {
     try {
       const image = await decodeFile(file);
       if (token !== state.photoToken) { release(image); return; }
-      state.photo = image; photoMedia = null; photoBlob = null; drawCrop(); photoMessage();
+      state.photo = image; photoMedia = null; photoBlob = null; originalFile = file; drawCrop(); photoMessage(); scheduleLive();
     } catch (error) {
       if (token !== state.photoToken) return;
       state.photoError = error.message; photoMessage(error.message, true);
@@ -264,7 +264,7 @@ export function mountEditor(root, bridge) {
     }
     return canvas;
   }
-  let createPromise = null, photoMedia = bridge.record?.photoId || null, photoBlob = null;
+  let createPromise = null, photoMedia = bridge.record?.photoId || null, photoBlob = null, originalFile = null;
   let pendingDraft = null, pendingConfirm = null, lastSavedRevision = -1;
   const snapshotEditor = () => ({ transform: { ...state.transform }, privacy: state.privacy, mask: state.mask && { ...state.mask }, template: 'figma-v1' });
   const blobOf = (canvas,type='image/png',quality) => new Promise((resolve,reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('图片编码失败')),type,quality));
@@ -299,13 +299,35 @@ export function mountEditor(root, bridge) {
       photoBlob = await blobOf(work,'image/jpeg',.96); photoMedia = crypto.randomUUID();
     }
     if (photoBlob) await bridge.upload(bridge.record.id,photoMedia,'photo',photoBlob);
+    if (originalFile) await bridge.source(bridge.record.id,photoMedia,originalFile);
     if (!pendingDraft || pendingDraft.revision !== revision) {
       const {age,number,...profile} = d; profile.memberName = $('memberName').value.trim();
       pendingDraft = {revision,body:{operationId:crypto.randomUUID(),version:bridge.record.version,profile,editor:snapshotEditor(),photoId:photoMedia}};
     }
     const saved=await bridge.send('PUT','/members/'+bridge.record.id+'/draft',pendingDraft.body);
     bridge.record={...bridge.record,version:saved.version,status:'pending',photoId:photoMedia,profile:pendingDraft.body.profile};
-    pendingDraft=null; photoBlob=null; lastSavedRevision=-1; bridge.dirty(false); syncNumber();
+    pendingDraft=null; photoBlob=null; originalFile=null; lastSavedRevision=-1; bridge.dirty(false); syncNumber();
+  }
+  async function readyFonts(d) {
+    const characters=Object.values(d).join('')+'他的资料她的资料出生年份身高民族婚姻状况学历工作月收入资产家庭情况红娘评价择偶要求编号未填写';
+    await Promise.all([400,500,700].map(w=>document.fonts.load(`${w} 24px ${FONT}`,characters)));
+    await document.fonts.ready;
+  }
+  function scheduleLive() {
+    clearTimeout(liveTimer);liveTimer=setTimeout(async()=>{
+      if(disposed||state.busy||state.view!=='edit')return;
+      const revision=state.revision;
+      try {
+        quietValidation=true;const d=data();quietValidation=false;
+        await readyFonts(d);const theme=themeFor(d.gender),background=await loadBackground(theme.key);
+        if(disposed||revision!==state.revision||state.busy||!background)return;
+        if(state.privacy==='cover'&&!state.avatar)state.avatar=await loadAvatar(theme.key);
+        if(disposed||revision!==state.revision||state.busy)return;
+        quietValidation=true;const layout=layoutCard(d);quietValidation=false;d.number=bridge.record?.number;renderCard(d,{...state.transform},theme,background,layout);
+        const live=$('liveCard');live.getContext('2d').clearRect(0,0,W,H);live.getContext('2d').drawImage(canvas,0,0);live.hidden=false;
+        $('liveStatus').textContent='实时预览 · 保存前仍可调整照片展示方式';
+      }catch(e){if(!disposed){$('liveCard').hidden=true;$('liveStatus').textContent=e.message;}}finally{quietValidation=false;}
+    },180);
   }
   const avatarCache = new Map();
   const editor = $('maskEditor'), editorCtx = editor.getContext('2d');
@@ -327,7 +349,8 @@ export function mountEditor(root, bridge) {
     $('generate').disabled = state.busy || state.pending > 0;
     $('generate').textContent = state.busy ? '正在处理…' : '生成卡片';
     $('saveCard').disabled = state.busy || avatarLoading || !state.preview || !state.privacy || (covered && (!state.mask || !state.avatar));
-    $('saveCard').textContent = state.busy ? '正在保存…' : '保存并下载';
+    $('saveCard').textContent = state.busy ? '正在保存…' : '保存并查看详情';
+    $('saveDownload').disabled = $('saveCard').disabled;
     $('backToEdit').disabled = state.busy;
     $('privacyChoices').disabled = state.busy;
 
@@ -378,7 +401,7 @@ export function mountEditor(root, bridge) {
     event.preventDefault(); if (state.busy || state.pending) return;
     state.busy = true; controls(); const revision = state.revision;
     try {
-      const d = data(); await document.fonts.ready;
+      const d = data(); await readyFonts(d);
       const theme = themeFor(d.gender), background = await loadBackground(theme.key);
       if (!background) throw new Error('当前主题底图加载失败，请检查工具资源后重试。');
       const layout = layoutCard(d);
@@ -393,7 +416,7 @@ export function mountEditor(root, bridge) {
     finally { state.busy = false; controls(); }
     if (state.view === 'preview' && state.privacy === 'cover') await selectPrivacy('cover');
   }
-  async function saveCard() {
+  async function saveCard(withDownload = false) {
     if ($('saveCard').disabled || state.busy || !state.preview) return;
     state.busy = true; controls();
     try {
@@ -409,12 +432,14 @@ export function mountEditor(root, bridge) {
         const saved=await bridge.send('POST','/members/'+bridge.record.id+'/confirm',task.body);
         bridge.record={...bridge.record,...saved,status:'confirmed'};lastSavedRevision=task.revision;pendingConfirm=null;bridge.dirty(false);bridge.saved();
       }
-      await bridge.download(bridge.record.id);
-      status('成品已保存到工作台，并已发起下载。可返回列表查看。');
+      if (withDownload) await bridge.download(bridge.record.id);
+      if (!withDownload) bridge.done(bridge.record.id);
+      else status('成品已保存到工作台，并已发起下载。');
     } catch(error){status(error.message||'保存失败，当前预览已保留，请重试。',true);}
     finally{state.busy=false;controls();}
   }
-  $('saveCard').onclick=saveCard;
+  $('saveCard').onclick=()=>saveCard(false);
+  $('saveDownload').onclick=()=>saveCard(true);
   $('backToEdit').onclick=()=>{if(!state.busy){showView('edit');$('generate').focus();}};
   for (const radio of root.querySelectorAll('[name=privacy]')) radio.onchange = () => selectPrivacy(radio.value);
   function maskPoint(event) {
@@ -468,8 +493,8 @@ export function mountEditor(root, bridge) {
       if(record.photoId){state.busy=true;controls();try{const response=await bridge.photo(record.photoId); const file=new File([response],'photo.jpg',{type:response.type});const decoded=await decodeFile(file);if(disposed){release(decoded);return;}state.photo=decoded;$('uploadPhoto').textContent='更换照片';}catch(e){photoMessage(e.message,true);}finally{state.busy=false;}}
     }
     if(disposed)return;
-    lastName=$('memberName').value.trim();lastGender=gender();sync();drawCrop();syncNumber();controls();
+    lastName=$('memberName').value.trim();lastGender=gender();sync();drawCrop();syncNumber();controls();scheduleLive();
   }
   sync();drawCrop();syncNumber();hydrate();
-  return () => {disposed=true;state.photoToken++;state.privacyToken++;release(state.photo);};
+  return () => {disposed=true;clearTimeout(liveTimer);state.photoToken++;state.privacyToken++;release(state.photo);};
 }
