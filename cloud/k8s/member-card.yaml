@@ -1,0 +1,115 @@
+# Replace example names, image, origin, PostgreSQL address, Secret and OBS PVC before applying.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: member-card-config
+data:
+  ENVIRONMENT: production
+  HOST: 0.0.0.0
+  PORT: "8080"
+  PUBLIC_ORIGIN: https://member-card.example.com
+  PGHOST: postgres.example.internal
+  PGPORT: "5432"
+  PGDATABASE: member_card
+  PGUSER: member_card_app
+  PG_SSL_MODE: verify-full
+  MEDIA_ROOT: /mnt/member-card-obs
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: member-card-migrate-v1
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: REPLACE_WITH_IMAGE_DIGEST
+          command: ["node", "build/migrate.js"]
+          envFrom:
+            - configMapRef:
+                name: member-card-config
+            - secretRef:
+                name: member-card-secret
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: member-card
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: member-card
+  template:
+    metadata:
+      labels:
+        app: member-card
+    spec:
+      containers:
+        - name: web
+          image: REPLACE_WITH_IMAGE_DIGEST
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: member-card-config
+            - secretRef:
+                name: member-card-secret
+          volumeMounts:
+            - name: media
+              mountPath: /mnt/member-card-obs
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8080
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8080
+      volumes:
+        - name: media
+          persistentVolumeClaim:
+            claimName: REPLACE_WITH_OBS_PVC
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: member-card
+spec:
+  selector:
+    app: member-card
+  ports:
+    - port: 80
+      targetPort: 8080
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: member-card-cleanup
+spec:
+  schedule: "43 19 * * *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: cleanup
+              image: REPLACE_WITH_IMAGE_DIGEST
+              command: ["node", "build/run-cleanup.js"]
+              envFrom:
+                - configMapRef:
+                    name: member-card-config
+                - secretRef:
+                    name: member-card-secret
+              volumeMounts:
+                - name: media
+                  mountPath: /mnt/member-card-obs
+          volumes:
+            - name: media
+              persistentVolumeClaim:
+                claimName: REPLACE_WITH_OBS_PVC

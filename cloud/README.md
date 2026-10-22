@@ -1,66 +1,50 @@
-# 同舟婚恋会员管理 Pro
+# 会员卡应用：PostgreSQL＋容器
 
-React + TypeScript + Tailwind CSS，Hono / Cloudflare Workers，Drizzle + D1，私有 R2。旧版 Canvas 卡片排版保留。
+项目使用 React、TypeScript、Hono 和 Node.js 22。PostgreSQL 保存账号、会员、服务记录、媒体索引及审计；图片文件写入 `MEDIA_ROOT` 指向的挂载目录。项目尚未发布，没有生产数据，也无需搬迁 D1 或 R2 数据。
 
-## 使用
+## 本地运行
 
-使用个人工作账号登录。管理员进入管理控制台，可管理会员及员工账号；员工进入会员工作台。旧共享访问码登录已停用。服务端接口版本为 2.2.0，package.json 包版本暂沿用 2.1.0。
-
-点击「创建会员卡片」，首次选择性别即获得服务器统一编号。填写资料、上传照片并调整构图，点击「生成卡片」进入预览，选择原照或卡通遮挡，最后「保存并下载」。姓名仅用于管理与文件名，不印在卡片上。成品为 1440×1080 PNG。
-
-首页只展示已保存成品。可按姓名/编号、性别、未婚/离异、70后/80后/90后/00后组合筛选。离异包含所有离异细分类与短婚未育。返回列表保留当前筛选；刷新页面恢复全部。
-
-编辑后未再次保存时，列表和下载仍使用上次已保存版本。未完成的编号不回收；已上传但未关联的临时图片七天后自动清理。所有已关联照片及历史成品继续保留。
-
-## 开发与验证
-
-使用 Node.js 22。独立包不依赖主 CRM。
+先准备独立的 PostgreSQL 数据库和可写的图片目录，将 `.env.example` 中的配置设为实际环境变量。敏感值不要写入仓库。
 
 ```sh
 npm ci
+npm run db:migrate
 npm run build
-npm run db:local
-# 首次初始化所需 BOOTSTRAP_TOKEN_HASH 放在本地 .dev.vars 中，勿提交
-npm run dev
+npm start
+```
+
+`npm run db:migrate` 是单独的版本化数据库任务；Web 启动不会自动迁移。迁移账本记录文件名和 SHA-256，同一版本的文件内容改变会报错。迁移在事务中运行，并用 PostgreSQL advisory lock 防止同库并发执行。首次空库会建立 14 张业务表及迁移账本；重复执行应无新变更。
+
+测试需要一个名称以 `_test` 结尾的专用 PostgreSQL 数据库；测试在随机 schema 中运行，结束后清除该 schema 和临时图片目录。
+
+```sh
+npm run typecheck
+npm run build
 npm test
-npm audit
 ```
 
-本地测试使用隔离临时 D1/R2，覆盖编号并发、幂等、共享访问、筛选边界、快照、图片关联、故障重试及清理。
+`GET /health/live` 检查进程，`GET /health/ready` 实际查询 PostgreSQL。`GET /api/status` 也会检查数据库。构建产物和 API 由同一 Node.js 服务提供；前端子路由刷新会返回页面入口。
 
-以下 cloud-smoke.ts 为旧共享码流程的历史工具，不适用于当前个人账号版本，不应作为当前发布验收命令。它仅允许固定 staging 地址，凭据文件置于仓库之外。
+## 配置
 
-```sh
-SMOKE_URL=https://tongzhou-member-card-staging.lvyongsz.workers.dev \
-SMOKE_CREDENTIAL_FILE=/secure/path/staging-access.json npx tsx tests/cloud-smoke.ts
-```
+- 必需：`PGHOST`、`PGDATABASE`、`PGUSER`、`PGPASSWORD`、`PUBLIC_ORIGIN`、`MEDIA_ROOT`。
+- 可选：`PGPORT`（默认 5432）、`PG_POOL_MAX`（默认 10）、`HOST`（默认 `0.0.0.0`）、`PORT`（默认 8080）、`ENVIRONMENT`。
+- 数据库 TLS：`PG_SSL_MODE=disable` 或 `verify-full`；如需指定 CA，设置 `PG_SSL_CA_FILE`。按目标数据库实际证书链和主机名配置，不能关闭证书校验来掩盖错误。
+- 初始化首位管理员时，通过 Secret 提供 `BOOTSTRAP_TOKEN_HASH`。摘要使用 `src/server/crypto.ts` 的 `hashPassword` 生成；不要提供明文 token 或密码给镜像。
+- 默认使用实际连接的客户端地址做登录限流。只有在 `TRUSTED_PROXY_IPS` 明确列出入口代理地址时，才会读取 `CLIENT_IP_HEADER` 指定的单一 IP 头。入口代理须覆盖该头，不能透传客户端伪造的值。
 
-## 部署
+`PUBLIC_ORIGIN` 必须为外部访问的准确协议和域名，不带路径。生产环境要求 HTTPS；写操作的 `Origin` 必须与它完全一致。
 
-Wrangler 配置显式隔离 staging / production 的 D1、R2、Worker。账户及数据库 ID 不是凭据。OAuth / API token、真实访问码、摘要、会员数据均不得提交。
+## 图片挂载约束
 
-```sh
-npx wrangler login
-npm run build
-npx wrangler d1 migrations apply DB --remote --env staging
-npm run deploy:test
-# 通过验收后：
-npx wrangler d1 migrations apply DB --remote --env production
-npm run deploy
-```
+应用通过 Node.js 文件系统 API 保存和读取图片，不使用 OBS SDK。部署方负责将 OBS 挂载到容器内 `MEDIA_ROOT`，并确保运行用户有读写与删除权限、各副本看到同一数据。启动会检查目录存在且可写；每次写入后会读回并校验 SHA-256，数据库状态只有在校验通过后才变为 `ready`。失败的 `pending` 记录和无引用文件可重试或由清理任务处理。
 
-首次初始化需通过安全渠道配置 BOOTSTRAP_TOKEN_HASH，摘要使用 src/server/crypto.ts 的 hashPassword 生成。初始化页面创建首位管理员后，由管理员创建员工账号。已有生产账号不得重新初始化。密码采用 scrypt N=16384,r=8,p=5；会话 8 小时有效，生产 Cookie 为 Secure / HttpOnly / SameSite Strict。停用账号或重置密码会撤销其会话。登录限流为每 IP 每15分钟30次。
+程序使用目录创建、文件覆盖、读回和删除，不依赖跨文件原子重命名。OBS 挂载对这些操作的实际支持、多副本可见性和延迟必须在目标 CCE 环境验收。图片始终经登录后的 API 提供，不把挂载目录配置为静态站点。
 
-当前迁移为 0001–0004。运行生产迁移和 deploy 前必须单独取得发布授权并完成备份；推送 GitHub 不会自动部署 Worker。
+## 容器与 CCE
 
-Workers Paid 基础订阅已由账户所有者批准；当前配置每请求 CPU 上限1000ms。该上限不是账户费用封顶。D1/R2/Workers 超额按套餐计费，账单在 Cloudflare 控制台查看。R2 不启用 r2.dev 公共地址或公共自定义域名；所有照片经受保护 API 读取。
+`Dockerfile` 构建 Web、迁移与清理共用镜像。`k8s/member-card.yaml` 是待替换的基础模板，包含一次性迁移 Job、Deployment、Service 和清理 CronJob。先创建 ConfigMap、Secret 和 OBS 对应的 PVC，并核对所有名称、键、挂载权限和镜像摘要；模板不能原样用于生产。数据库迁移成功后再启动 Web 工作负载。
 
-## 恢复与维护
+清理任务使用独立进程，并通过 PostgreSQL advisory lock 防止多实例同时执行。运行命令为 `node build/run-cleanup.js`。模板中的 CronJob 计划时间需要按业务时区核对。
 
-发布前保存当前 Worker 版本号并导出 D1 到仓库外安全路径（wrangler d1 export DB --remote --env production --output /secure/path/backup.sql）。数据库备份含个人资料，不上传 GitHub。按业务保留期限在私有受控存储备份 R2 对象；当前未配置独立异地备份或对象版本恢复。
-
-应用回退使用 Wrangler deployments 列表核对后 rollback 至已知版本。数据库迁移只做兼容新增，不随应用回退删除表或重置序列。恢复数据库前同时核对照片对象及 snapshots 的关联，不单独清空桶。正式库不写测试会员。
-
-临时对象清理每日执行；关联对象不自动删除。管理员可软删除会员，保留数据及审计历史并阻止继续访问该会员及关联图片。服务记录更正保留历史版本。卡片成品使用卡通遮挡不会自动抹除受保护存储中的原始照片。
-
-GitHub Pages 目前只提供旧入口指引。前后端分离与境内免 VPN 访问尚未实施或验收。开发者需使用独立测试数据和本地凭据；cloud/tests/*browser.mjs 是依赖历史本地 UAT 状态的辅助工具，不代表本次已执行的浏览器验收。
+当前仓库构建与本地测试结果不代表 CCE 发布或线上验收。

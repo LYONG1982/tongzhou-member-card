@@ -1,37 +1,36 @@
 {
   "name": "tongzhou-member-card-cloud",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev --port 8787",
-    "build": "tsc --noEmit && vite build",
+    "dev": "tsx src/server/runtime.ts",
+    "dev:client": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build && esbuild src/server/runtime.ts src/server/migrate.ts src/server/run-cleanup.ts --bundle --platform=node --packages=external --format=esm --outdir=build",
     "typecheck": "tsc --noEmit",
-    "db:local": "wrangler d1 migrations apply DB --local",
-    "test": "wrangler deploy --env=\"\" --dry-run --outdir .wrangler/test-bundle && tsx --test tests/*.test.ts",
-    "deploy:test": "wrangler deploy --env staging",
-    "deploy": "wrangler deploy --env production"
+    "db:migrate": "tsx src/server/migrate.ts",
+    "start": "node build/runtime.js",
+    "cleanup": "node build/run-cleanup.js",
+    "test": "tsx --test tests/postgres/*.test.ts"
   },
   "dependencies": {
-    "drizzle-orm": "^0.45.4",
     "hono": "4.13.13",
+    "pg": "^8.23.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "5.20261021.1",
     "@tailwindcss/vite": "^4.1.0",
     "@types/node": "^22.0.0",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^5.0.0",
     "esbuild": "^0.25.12",
-    "miniflare": "^5.20261019.1-beta",
     "tailwindcss": "^4.1.0",
     "tsx": "^4.20.0",
     "typescript": "~5.9.3",
-    "vite": "^7.3.0",
-    "wrangler": "4.151.3"
+    "vite": "^7.3.0"
   }
 }

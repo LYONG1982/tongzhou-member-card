@@ -1,15 +1,7 @@
 # 同舟婚恋会员管理 Pro
 
-正式入口：https://tongzhou-member-card.lvyongsz.workers.dev/
+当前项目尚未发布，没有生产会员数据。`cloud/` 是应用源码；目前的目标运行方式为 Node.js 容器、PostgreSQL，以及由部署方挂载的图片目录。挂载目录预期由华为云 OBS 提供，应用自身不调用 OBS API。
 
-使用个人工作账号登录。管理员可管理会员、服务记录与员工账号；员工使用会员工作台，创建、筛选、编辑会员卡片及保存下载。照片与资料保存在受保护的 Cloudflare API、D1 数据库和私有 R2 中。旧共享访问码登录已停用。
+管理员可以管理会员、服务记录和员工账号；员工使用会员工作台创建、筛选、编辑会员卡片并保存下载。照片和成品经受保护的 API 读取，挂载目录不对外公开。
 
-[cloud/](cloud/) 为当前应用源码、迁移、测试和部署说明。包含个人账号、管理员与员工双工作台、会员服务记录和更正历史、原始照片保存与下载、会员软删除和同步提示。
-
-GitHub Pages 地址：https://lyong1982.github.io/tongzhou-member-card/ 。目前仍是旧入口指引，不承载完整工作台；页面中的共享访问码文字属于历史说明，请以当前个人账号登录方式为准。根目录静态生成器文件保留作历史参考。
-
-2026-10-22 本次同步现有源码，不包含尚待确认的 GitHub 前端与 Cloudflare 后台分离改造，也不代表已通过中国境内免 VPN 验收。
-
-源码仓库公开。本次提交范围为应用源码、测试、迁移和必要品牌/字体素材；本地凭据、数据库、生产备份、会员照片、验收截图和设计交付目录不上传。正式 Worker 部署通过另行授权的 Wrangler 操作完成；GitHub Actions 仅构建和测试，不持有生产部署密钥。
-
-本次推送前验证：`npm run typecheck` 通过，`npm test` 21 项通过；测试使用本地隔离 Miniflare，Wrangler 仅执行 dry-run，没有部署 Cloudflare 或执行生产迁移。浏览器验收脚本保留作历史验证工具，可能依赖指定本地 UAT 环境及当时的页面文案，本次未重跑。
+本地开发、数据库迁移、镜像构建和配置要求见 [cloud/README.md](cloud/README.md)。`cloud/wrangler.jsonc` 和 `cloud/migrations/` 是迁移前保留的历史配置与 SQLite 迁移，不代表已在 Cloudflare 发布；当前测试使用 PostgreSQL 和临时文件目录。
