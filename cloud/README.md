@@ -29,7 +29,7 @@ npm test
 
 - 必需：`DATABASEURL`、`PUBLIC_ORIGIN`、`MEDIA_ROOT`。`DATABASEURL` 是 PostgreSQL 完整连接串，包含主机、端口、数据库、用户和密码；密码中的 URL 保留字符须百分号编码。
 - 可选：`PG_POOL_MAX`（默认 10）、`PGSCHEMA`（默认使用 `public`）、`HOST`（默认 `0.0.0.0`）、`PORT`（默认 8080）、`ENVIRONMENT`。
-- 数据库连接：当前目标环境不使用 TLS 证书，连接串必须带 `sslmode=disable`；代码也会拒绝缺少该参数或包含证书参数的连接串。该连接应限制在受控的私有网络内。
+- 数据库连接：连接串使用完整 PostgreSQL URL，不附加查询参数；Node `pg` 连接池通过 `ssl: false` 明确关闭 TLS。该连接应限制在受控的私有网络内。
 - 初始化首位管理员时，通过 Secret 提供 `BOOTSTRAP_TOKEN_HASH`。摘要使用 `src/server/crypto.ts` 的 `hashPassword` 生成；不要提供明文 token 或密码给镜像。
 - 默认使用实际连接的客户端地址做登录限流。只有在 `TRUSTED_PROXY_IPS` 明确列出入口代理地址时，才会读取 `CLIENT_IP_HEADER` 指定的单一 IP 头。入口代理须覆盖该头，不能透传客户端伪造的值。
 

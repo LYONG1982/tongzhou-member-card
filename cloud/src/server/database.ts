@@ -46,8 +46,7 @@ export function createPoolFromEnv(env:NodeJS.ProcessEnv){
  try{parsed=new URL(connectionString);}catch{throw new Error('DATABASEURL must be a valid PostgreSQL connection URL');}
  if(!['postgres:','postgresql:'].includes(parsed.protocol)||!parsed.hostname||!parsed.username||!parsed.password||parsed.pathname.length<2)throw new Error('DATABASEURL must include PostgreSQL host, database, username, and password');
  if(parsed.port&&(!Number.isInteger(Number(parsed.port))||Number(parsed.port)<1||Number(parsed.port)>65535))throw new Error('DATABASEURL has an invalid port');
- if(parsed.searchParams.get('sslmode')?.toLowerCase()!=='disable')throw new Error('DATABASEURL must specify sslmode=disable');
- if(['sslcert','sslkey','sslrootcert'].some(key=>parsed.searchParams.has(key)))throw new Error('DATABASEURL must not include TLS certificate parameters');
+ if(parsed.search||parsed.hash)throw new Error('DATABASEURL must not include query parameters or a fragment');
  const max=Number(env.PG_POOL_MAX||10);
  if(!Number.isInteger(max)||max<1||max>100)throw new Error('PG_POOL_MAX must be between 1 and 100');
  if(env.PGSCHEMA&&!/^[a-z][a-z0-9_]{0,62}$/.test(env.PGSCHEMA))throw new Error('PGSCHEMA has an invalid name');

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,rm,readFile} from 'node:fs/promises';
+import {mkdtemp,rm,readFile,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {deflateSync} from 'node:zlib';
@@ -23,7 +23,10 @@ test('PostgreSQL, mounted media, API and concurrency',async t=>{
  const testDatabase=testUrl?decodeURIComponent(testUrl.pathname.slice(1)):'';
  if(!testDatabase?.endsWith('_test'))throw new Error('Tests require a DATABASEURL whose database name ends in _test');
  assert.throws(()=>createPoolFromEnv({...process.env,DATABASEURL:undefined}),/DATABASEURL/);
- assert.throws(()=>createPoolFromEnv({...process.env,DATABASEURL:'postgresql://user:password@localhost/member_card_test'}),/sslmode=disable/);
+ const noTlsPool=createPoolFromEnv({...process.env,DATABASEURL:'postgresql://user:password@localhost/member_card_test'});
+ assert.equal(noTlsPool.options.ssl,false);
+ await noTlsPool.end();
+ assert.throws(()=>createPoolFromEnv({...process.env,DATABASEURL:'postgresql://user:password@localhost/member_card_test?sslmode=disable'}),/query parameters/);
  const schema=`test_${id().replaceAll('-','')}`;
  const adminPool=createPoolFromEnv({...process.env,PGSCHEMA:undefined});
  await adminPool.query(`CREATE SCHEMA ${schema}`);
@@ -32,7 +35,29 @@ test('PostgreSQL, mounted media, API and concurrency',async t=>{
  const mediaRoot=await mkdtemp(join(tmpdir(),'member-card-media-'));
  let pool:ReturnType<typeof createPoolFromEnv>|undefined;
  try{
-  await migrate();await migrate();
+  await migrate();
+  const rerunLogs:string[]=[],originalRerunLog=console.log;
+  console.log=(...args:unknown[])=>rerunLogs.push(args.map(String).join(' '));
+  try{await migrate();}finally{console.log=originalRerunLog;}
+  const rerunRecords=rerunLogs.map(line=>JSON.parse(line) as Record<string,unknown>);
+  assert.ok(rerunRecords.some(record=>record.event==='migration_file_skipped'&&record.file==='0001_initial.sql'));
+  assert.equal(rerunRecords.some(record=>record.event==='migration_file_applied'),false);
+  const failureDirectory=await mkdtemp(join(tmpdir(),'member-card-migration-failure-'));
+  const migrationLogs:string[]=[],originalLog=console.log,originalError=console.error,originalWarn=console.warn;
+  console.log=(...args:unknown[])=>migrationLogs.push(args.map(String).join(' '));
+  console.error=(...args:unknown[])=>migrationLogs.push(args.map(String).join(' '));
+  console.warn=(...args:unknown[])=>migrationLogs.push(args.map(String).join(' '));
+  try{
+   await writeFile(join(failureDirectory,'0001_intentional_failure.sql'),'SELECT 1 / 0;');
+   await assert.rejects(()=>migrate(failureDirectory));
+  }finally{console.log=originalLog;console.error=originalError;console.warn=originalWarn;await rm(failureDirectory,{recursive:true,force:true});}
+  const migrationRecords=migrationLogs.map(line=>JSON.parse(line) as Record<string,unknown>);
+  const failedFile=migrationRecords.find(record=>record.event==='migration_file_failed');
+  assert.equal(failedFile?.file,'0001_intentional_failure.sql');
+  assert.equal(failedFile?.stage,'migration_file_execution');
+  assert.equal(failedFile?.error_code,'22012');
+  assert.ok(migrationRecords.some(record=>record.event==='migration_rolled_back'));
+  assert.equal((await adminPool.query(`SELECT version FROM "${schema}".schema_migrations WHERE version='0001_intentional_failure.sql'`)).rowCount,0);
   pool=createPoolFromEnv(process.env);
   const db=new PgDatabase(pool),media=await MediaStore.open(mediaRoot);
   const bootstrap=id(),password=id()+id(),origin='https://member-card.test';

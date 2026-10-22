@@ -5,6 +5,7 @@ import {HTTPException} from 'hono/http-exception';
 import {z,ZodError} from 'zod';
 import {readFile} from 'node:fs/promises';
 import {extname,relative,resolve} from 'node:path';
+import {randomUUID} from 'node:crypto';
 import {publicAccounts,privateAccounts,publicRole} from './accounts';
 import {serviceRoutes} from './service-records';
 import {photoSourceRoutes} from './photo-sources';
@@ -13,10 +14,12 @@ import {numberFor} from './common';
 import type {Env,User} from './types';
 import {digest} from './crypto';
 import {uuid,gender,draftInput,confirmInput,imageInfo} from './validation';
+import {logError} from './logger';
 export const app=new Hono<Env>();
 const now=()=>Date.now();
 function fail(status:400|401|403|404|409|410|413|429|503,message:string):never {throw new HTTPException(status,{message});}
 const cookieName='tz_session';
+app.use('*',async(c,next)=>{const supplied=c.req.header('x-request-id');c.header('X-Request-Id',supplied&&/^[0-9a-f-]{36}$/i.test(supplied)?supplied:randomUUID());await next();});
 app.use('*',async(c,next)=>{
  c.header('X-Content-Type-Options','nosniff');c.header('Referrer-Policy','no-referrer');c.header('X-Frame-Options','DENY');
  c.header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
@@ -31,8 +34,8 @@ async function rate(c:any,bucket:string,key:string,max:number,seconds=900){
  if(Number(row?.count)>max){c.header('Retry-After',String(seconds));fail(429,'操作过于频繁，请稍后重试');}
 }
 app.get('/health/live',c=>c.json({live:true}));
-app.get('/health/ready',async c=>{try{await c.env.DB.one('SELECT 1');return c.json({ready:true});}catch{return c.json({ready:false},503);}});
-app.get('/api/status',async c=>{try{await c.env.DB.one('SELECT 1');return c.json({configured:true,version:'2.2.0'});}catch{return c.json({configured:false,version:'2.2.0'},503);}});
+app.get('/health/ready',async c=>{try{await c.env.DB.one('SELECT 1');return c.json({ready:true});}catch(error){logError('database_readiness_check_failed',error,{request_id:c.res.headers.get('x-request-id')||'unknown',path:c.req.path,status:503});return c.json({ready:false},503);}});
+app.get('/api/status',async c=>{try{await c.env.DB.one('SELECT 1');return c.json({configured:true,version:'2.2.0'});}catch(error){logError('database_status_check_failed',error,{request_id:c.res.headers.get('x-request-id')||'unknown',path:c.req.path,status:503});return c.json({configured:false,version:'2.2.0'},503);}});
 app.post('/api/login',c=>c.json({error:'共享访问码已停用，请使用个人账号登录'},410));
 publicAccounts(app);
 app.use('/api/*',async(c,next)=>{
@@ -147,7 +150,14 @@ app.get('/api/members/:id/download',async c=>{
  c.header('Content-Type','image/png');c.header('Cache-Control','private, no-store');c.header('Content-Disposition',"attachment; filename=member-card.png; filename*=UTF-8''"+encodeURIComponent(filename));return c.body(object.body as any);
 });
 app.all('/api/*',c=>c.json({error:'接口不存在'},404));
-app.onError((error,c)=>{if(String(error).includes('member_unavailable'))return c.json({error:'会员不存在或已删除'},404);if(error instanceof ZodError)return c.json({error:error.issues[0]?.message||'输入无效'},400);if(error instanceof HTTPException)return c.json({error:error.message},error.status);console.error('request_failed',error.name,(error as {code?:string}).code||'');return c.json({error:'服务暂不可用，请稍后重试；当前编辑内容仍保留'},503);});
+app.onError((error,c)=>{
+ if(String(error).includes('member_unavailable'))return c.json({error:'会员不存在或已删除'},404);
+ if(error instanceof ZodError)return c.json({error:error.issues[0]?.message||'输入无效'},400);
+ const status=error instanceof HTTPException?error.status:503;
+ if(status>=500)logError('request_failed',error,{request_id:c.res.headers.get('x-request-id')||'unknown',method:c.req.method,path:c.req.path,status});
+ if(error instanceof HTTPException)return c.json({error:error.message},error.status);
+ return c.json({error:'服务暂不可用，请稍后重试；当前编辑内容仍保留'},503);
+});
 app.get('*',async c=>{
  const root=resolve(process.cwd(),'dist');
  let pathname:string;
