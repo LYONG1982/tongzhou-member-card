@@ -12,7 +12,7 @@ data:
   PGPORT: "5432"
   PGDATABASE: member_card
   PGUSER: member_card_app
-  PG_SSL_MODE: verify-full
+  PG_SSL_MODE: disable
   MEDIA_ROOT: /mnt/member-card-obs
 ---
 apiVersion: batch/v1

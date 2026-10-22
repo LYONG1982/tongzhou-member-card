@@ -29,7 +29,7 @@ npm test
 
 - 必需：`PGHOST`、`PGDATABASE`、`PGUSER`、`PGPASSWORD`、`PUBLIC_ORIGIN`、`MEDIA_ROOT`。
 - 可选：`PGPORT`（默认 5432）、`PG_POOL_MAX`（默认 10）、`HOST`（默认 `0.0.0.0`）、`PORT`（默认 8080）、`ENVIRONMENT`。
-- 数据库 TLS：`PG_SSL_MODE=disable` 或 `verify-full`；如需指定 CA，设置 `PG_SSL_CA_FILE`。按目标数据库实际证书链和主机名配置，不能关闭证书校验来掩盖错误。
+- 数据库连接：当前目标环境不使用 TLS 证书，设置 `PG_SSL_MODE=disable`，不配置 `PG_SSL_CA_FILE`。该连接应限制在受控的私有网络内；若目标数据库网络策略后来要求 TLS，需同时调整连接配置和证书挂载。
 - 初始化首位管理员时，通过 Secret 提供 `BOOTSTRAP_TOKEN_HASH`。摘要使用 `src/server/crypto.ts` 的 `hashPassword` 生成；不要提供明文 token 或密码给镜像。
 - 默认使用实际连接的客户端地址做登录限流。只有在 `TRUSTED_PROXY_IPS` 明确列出入口代理地址时，才会读取 `CLIENT_IP_HEADER` 指定的单一 IP 头。入口代理须覆盖该头，不能透传客户端伪造的值。
 
