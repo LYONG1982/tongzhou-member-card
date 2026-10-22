@@ -1,8 +1,8 @@
 import {z} from 'zod';
 export const uuid = z.string().uuid();
 export const gender = z.enum(['男','女']);
-export const loginInput=z.object({username:z.string().trim().min(3).max(64).regex(/^[a-zA-Z0-9_.@-]+$/).transform(v=>v.toLowerCase()), password:z.string().min(1).max(128)});
-export const newPassword=z.string().min(12,'密码至少 12 位').max(128,'密码最多 128 位');
+export const loginInput=z.object({username:z.string().trim().min(3).max(64).regex(/^[a-zA-Z0-9_.@-]+$/).transform(v=>v.toLowerCase()), password:z.string().min(5,'密码至少 5 位').max(128)});
+export const newPassword=z.string().min(5,'密码至少 5 位').max(128,'密码最多 128 位');
 export const profileInput=z.object({gender,memberName:z.string().trim().min(1).max(40),birth:z.string().regex(/^\d{4}$/).refine(v=>+v>=1900&&+v<=new Date().getFullYear(),'出生年份无效'),height:z.coerce.number().int().min(100).max(230),ethnic:z.string().max(12),marital:z.enum(['未婚','离异','离异未育','短婚未育','离异有孩（不随身）','离异有孩']),edu:z.string().min(1).max(16),job:z.string().max(24),income:z.string().max(24),assets:z.string().max(30),family:z.string().max(600),review:z.string().max(1200),match:z.string().max(1200)}).strict();
 export const editorInput=z.object({transform:z.object({x:z.number().finite().min(-100000).max(100000),y:z.number().finite().min(-100000).max(100000),zoom:z.number().min(1).max(3)}).strict(),privacy:z.enum(['','cover','original']),mask:z.object({x:z.number().min(0).max(612),y:z.number().min(0).max(816),size:z.number().min(80).max(900)}).nullable(),template:z.literal('figma-v1')}).strict();
 export const draftInput=z.object({operationId:uuid,version:z.number().int().min(0),profile:profileInput,editor:editorInput,photoId:uuid}).strict();
