@@ -7,12 +7,7 @@ data:
   ENVIRONMENT: production
   HOST: 0.0.0.0
   PORT: "8080"
-  PUBLIC_ORIGIN: https://member-card.example.com
-  PGHOST: postgres.example.internal
-  PGPORT: "5432"
-  PGDATABASE: member_card
-  PGUSER: member_card_app
-  PG_SSL_MODE: disable
+  PUBLIC_ORIGIN: https://tongzhou-card.jiansu.cloud
   MEDIA_ROOT: /mnt/member-card-obs
 ---
 apiVersion: batch/v1

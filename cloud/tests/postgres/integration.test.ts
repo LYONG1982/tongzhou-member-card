@@ -19,7 +19,11 @@ function png(width:number,height:number){
  return Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),chunk('IHDR',head),chunk('IDAT',deflateSync(pixels)),chunk('IEND',Buffer.alloc(0))]);
 }
 test('PostgreSQL, mounted media, API and concurrency',async t=>{
- if(!process.env.PGDATABASE?.endsWith('_test'))throw new Error('Tests require a dedicated PGDATABASE ending in _test');
+ const testUrl=process.env.DATABASEURL?new URL(process.env.DATABASEURL):null;
+ const testDatabase=testUrl?decodeURIComponent(testUrl.pathname.slice(1)):'';
+ if(!testDatabase?.endsWith('_test'))throw new Error('Tests require a DATABASEURL whose database name ends in _test');
+ assert.throws(()=>createPoolFromEnv({...process.env,DATABASEURL:undefined}),/DATABASEURL/);
+ assert.throws(()=>createPoolFromEnv({...process.env,DATABASEURL:'postgresql://user:password@localhost/member_card_test'}),/sslmode=disable/);
  const schema=`test_${id().replaceAll('-','')}`;
  const adminPool=createPoolFromEnv({...process.env,PGSCHEMA:undefined});
  await adminPool.query(`CREATE SCHEMA ${schema}`);

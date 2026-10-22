@@ -27,9 +27,9 @@ npm test
 
 ## 配置
 
-- 必需：`PGHOST`、`PGDATABASE`、`PGUSER`、`PGPASSWORD`、`PUBLIC_ORIGIN`、`MEDIA_ROOT`。
-- 可选：`PGPORT`（默认 5432）、`PG_POOL_MAX`（默认 10）、`HOST`（默认 `0.0.0.0`）、`PORT`（默认 8080）、`ENVIRONMENT`。
-- 数据库连接：当前目标环境不使用 TLS 证书，设置 `PG_SSL_MODE=disable`，不配置 `PG_SSL_CA_FILE`。该连接应限制在受控的私有网络内；若目标数据库网络策略后来要求 TLS，需同时调整连接配置和证书挂载。
+- 必需：`DATABASEURL`、`PUBLIC_ORIGIN`、`MEDIA_ROOT`。`DATABASEURL` 是 PostgreSQL 完整连接串，包含主机、端口、数据库、用户和密码；密码中的 URL 保留字符须百分号编码。
+- 可选：`PG_POOL_MAX`（默认 10）、`PGSCHEMA`（默认使用 `public`）、`HOST`（默认 `0.0.0.0`）、`PORT`（默认 8080）、`ENVIRONMENT`。
+- 数据库连接：当前目标环境不使用 TLS 证书，连接串必须带 `sslmode=disable`；代码也会拒绝缺少该参数或包含证书参数的连接串。该连接应限制在受控的私有网络内。
 - 初始化首位管理员时，通过 Secret 提供 `BOOTSTRAP_TOKEN_HASH`。摘要使用 `src/server/crypto.ts` 的 `hashPassword` 生成；不要提供明文 token 或密码给镜像。
 - 默认使用实际连接的客户端地址做登录限流。只有在 `TRUSTED_PROXY_IPS` 明确列出入口代理地址时，才会读取 `CLIENT_IP_HEADER` 指定的单一 IP 头。入口代理须覆盖该头，不能透传客户端伪造的值。
 
@@ -43,7 +43,7 @@ npm test
 
 ## 容器与 CCE
 
-`Dockerfile` 构建 Web、迁移与清理共用镜像。`k8s/member-card.yaml` 是待替换的基础模板，包含一次性迁移 Job、Deployment、Service 和清理 CronJob。先创建 ConfigMap、Secret 和 OBS 对应的 PVC，并核对所有名称、键、挂载权限和镜像摘要；模板不能原样用于生产。数据库迁移成功后再启动 Web 工作负载。
+`Dockerfile` 构建 Web、迁移与清理共用镜像。`k8s/member-card.yaml` 是待替换的基础模板，包含一次性迁移 Job、Deployment、Service 和清理 CronJob。数据库连接串必须作为 Secret 的 `DATABASEURL` 键提供；同一个 Secret 被迁移 Job 与 Web Deployment 引用。另准备其余敏感配置、ConfigMap 和 OBS 对应的 PVC，并核对所有名称、键、挂载权限和镜像摘要；模板不能原样用于生产。数据库迁移成功后再启动 Web 工作负载。
 
 清理任务使用独立进程，并通过 PostgreSQL advisory lock 防止多实例同时执行。运行命令为 `node build/run-cleanup.js`。模板中的 CronJob 计划时间需要按业务时区核对。
 
