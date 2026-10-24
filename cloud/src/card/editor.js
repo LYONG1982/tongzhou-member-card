@@ -1,5 +1,5 @@
 export function mountEditor(root, bridge) {
-  let disposed = false, quietValidation = false, liveTimer = null;
+  let disposed = false;
   const $ = id => root.querySelector("#" + id);
   const W = 1440, H = 1080;
   // Figma nodes 2:19 / 2:72; coordinates include the parent border.
@@ -76,9 +76,9 @@ export function mountEditor(root, bridge) {
     else if (sex !== lastGender) { invalidateMask(); state.avatar = null; }
 
     lastName = name; lastGender = sex;
-    bridge.dirty(true); sync(); if (!state.busy) status('资料已更新，点击“生成卡片”检查最终效果。'); syncNumber(); if (sex) ensureRecord().catch(e => status(e.message, true)); scheduleLive();
+    bridge.dirty(true); sync(); if (!state.busy) status('资料已更新，点击“下一步生成可遮盖头像卡片”进入展示方式选择和预览。'); syncNumber(); if (sex) ensureRecord().catch(e => status(e.message, true));
   }
-  function fieldError(id, message) { if (quietValidation) throw new Error(message); $(id).setAttribute('aria-invalid', 'true'); (id === 'photo' ? $('uploadPhoto') : $(id)).focus(); throw new Error(message); }
+  function fieldError(id, message) { $(id).setAttribute('aria-invalid', 'true'); (id === 'photo' ? $('uploadPhoto') : $(id)).focus(); throw new Error(message); }
   function data() {
     for (const el of root.querySelectorAll('[aria-invalid]')) el.removeAttribute('aria-invalid');
     const name = $('memberName').value.trim();
@@ -156,7 +156,7 @@ export function mountEditor(root, bridge) {
     try {
       const image = await decodeFile(file);
       if (token !== state.photoToken) { release(image); return; }
-      state.photo = image; photoMedia = null; photoBlob = null; originalFile = file; drawCrop(); photoMessage(); scheduleLive();
+      state.photo = image; photoMedia = null; photoBlob = null; originalFile = file; drawCrop(); photoMessage();
     } catch (error) {
       if (token !== state.photoToken) return;
       state.photoError = error.message; photoMessage(error.message, true);
@@ -313,22 +313,6 @@ export function mountEditor(root, bridge) {
     await Promise.all([400,500,700].map(w=>document.fonts.load(`${w} 24px ${FONT}`,characters)));
     await document.fonts.ready;
   }
-  function scheduleLive() {
-    clearTimeout(liveTimer);liveTimer=setTimeout(async()=>{
-      if(disposed||state.busy||state.view!=='edit')return;
-      const revision=state.revision;
-      try {
-        quietValidation=true;const d=data();quietValidation=false;
-        await readyFonts(d);const theme=themeFor(d.gender),background=await loadBackground(theme.key);
-        if(disposed||revision!==state.revision||state.busy||!background)return;
-        if(state.privacy==='cover'&&!state.avatar)state.avatar=await loadAvatar(theme.key);
-        if(disposed||revision!==state.revision||state.busy)return;
-        quietValidation=true;const layout=layoutCard(d);quietValidation=false;d.number=bridge.record?.number;renderCard(d,{...state.transform},theme,background,layout);
-        const live=$('liveCard');live.getContext('2d').clearRect(0,0,W,H);live.getContext('2d').drawImage(canvas,0,0);live.hidden=false;
-        $('liveStatus').textContent='实时预览 · 保存前仍可调整照片展示方式';
-      }catch(e){if(!disposed){$('liveCard').hidden=true;$('liveStatus').textContent=e.message;}}finally{quietValidation=false;}
-    },180);
-  }
   const avatarCache = new Map();
   const editor = $('maskEditor'), editorCtx = editor.getContext('2d');
   let avatarLoading = false, maskDrag = null;
@@ -347,7 +331,7 @@ export function mountEditor(root, bridge) {
     for (const id of ['zoom','centerPhoto','resetPhoto']) $(id).disabled=state.busy||!state.photo;
     const covered = state.privacy === 'cover';
     $('generate').disabled = state.busy || state.pending > 0;
-    $('generate').textContent = state.busy ? '正在处理…' : '生成卡片';
+    $('generate').textContent = state.busy ? '正在处理…' : '下一步生成可遮盖头像卡片';
     $('saveCard').disabled = state.busy || avatarLoading || !state.preview || !state.privacy || (covered && (!state.mask || !state.avatar));
     $('saveCard').textContent = state.busy ? '正在保存…' : '保存并查看详情';
     $('saveDownload').disabled = $('saveCard').disabled;
@@ -478,7 +462,6 @@ export function mountEditor(root, bridge) {
   crop.addEventListener('pointermove', event => { if (state.busy || !drag || !state.photo) return; invalidateMask(); const rect = crop.getBoundingClientRect(); state.transform.x += (event.clientX - drag.x) * PW / rect.width; state.transform.y += (event.clientY - drag.y) * PH / rect.height; drag = { x: event.clientX, y: event.clientY }; changed(); drawCrop(); });
   for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) crop.addEventListener(name, () => { drag = null; });
   crop.addEventListener('keydown', event => { if (state.busy || !state.photo || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return; event.preventDefault(); invalidateMask(); const step = event.shiftKey ? 20 : 3; state.transform.x += event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0; state.transform.y += event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0; changed(); drawCrop(); });
-  $('reset').onclick = () => { if(!state.busy) bridge.next(); };
   async function hydrate() {
     const record=bridge.record;
     if(record) {
@@ -493,8 +476,8 @@ export function mountEditor(root, bridge) {
       if(record.photoId){state.busy=true;controls();try{const response=await bridge.photo(record.photoId); const file=new File([response],'photo.jpg',{type:response.type});const decoded=await decodeFile(file);if(disposed){release(decoded);return;}state.photo=decoded;$('uploadPhoto').textContent='更换照片';}catch(e){photoMessage(e.message,true);}finally{state.busy=false;}}
     }
     if(disposed)return;
-    lastName=$('memberName').value.trim();lastGender=gender();sync();drawCrop();syncNumber();controls();scheduleLive();
+    lastName=$('memberName').value.trim();lastGender=gender();sync();drawCrop();syncNumber();controls();
   }
   sync();drawCrop();syncNumber();hydrate();
-  return () => {disposed=true;clearTimeout(liveTimer);state.photoToken++;state.privacyToken++;release(state.photo);};
+  return () => {disposed=true;state.photoToken++;state.privacyToken++;release(state.photo);};
 }

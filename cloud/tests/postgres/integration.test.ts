@@ -149,6 +149,10 @@ test('PostgreSQL, mounted media, API and concurrency',async t=>{
     return ok(`/members/${record.member.id}/confirm`,'POST',{operationId:id(),version:record.draft.version,editor:record.editor,cardId:record.card,thumbId:record.thumb},admin);
    }
    await confirm(first);
+   const malformedPng=Buffer.from(photo.subarray(0,photo.length-8));
+   const malformedSource=await call(`/members/${first.member.id}/photo-sources/${first.photo}`,'PUT',malformedPng,admin);
+   assert.equal(malformedSource.status,400);
+   assert.match((await malformedSource.json() as {error:string}).error,/原文件格式或尺寸无效/);
    await ok(`/members/${first.member.id}/photo-sources/${first.photo}`,'PUT',photo,admin);
    const original=await call(`/members/${first.member.id}/photo-source?download=1`,'GET',undefined,admin);
    assert.equal(original.status,200);

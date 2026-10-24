@@ -29,8 +29,7 @@
           <div class="minor-actions"><button id="centerPhoto" type="button" class="secondary" disabled>居中</button><button id="resetPhoto" type="button" class="secondary" disabled>重置构图</button></div>
         </div><div class="crop-column"><p class="crop-title">照片构图 <span>拖动调整位置</span></p><div class="crop-stage"><canvas id="crop" width="612" height="816" tabindex="0" role="img" aria-label="照片构图调整区，拖动或使用方向键移动照片">请使用支持 Canvas 的浏览器。</canvas><span id="cropPlaceholder">上传照片后调整构图</span></div><p class="hint">方向键微调，Shift + 方向键快速移动。此区域与成品照片框比例一致，请将脸部和肩部放入框内。</p></div></div>
       </section>
-      <section class="panel live-card-panel"><h2>推荐卡片实时预览</h2><p id="liveStatus" role="status">填写资料并上传照片后显示预览。</p><canvas id="liveCard" width="1440" height="1080" hidden aria-label="推荐卡片实时预览"></canvas></section>
-      <div class="action-bar"><div><p id="status" role="status" aria-live="polite">生成后，文字资料和照片将保存至工作台，已授权的工作账号可查看。</p><p class="hint">请确认照片与资料已获得会员使用授权。</p></div><div class="actions"><button type="button" id="reset" class="secondary">制作下一位</button><button id="generate" type="submit" class="primary">生成卡片</button></div></div>
+      <div class="action-bar"><div><p id="status" role="status" aria-live="polite">生成后，文字资料和照片将保存至工作台，已授权的工作账号可查看。</p><p class="hint">请确认照片与资料已获得会员使用授权。</p></div><div class="actions"><button id="generate" type="submit" class="primary">下一步生成可遮盖头像卡片</button></div></div>
     </form>
     <section id="previewPage" hidden aria-labelledby="previewTitle">
       <div class="preview-heading"><div><p class="eyebrow">最后一步 · 确认照片展示方式</p><h1 id="previewTitle" tabindex="-1">最终预览</h1><p class="hint">检查卡片内容，选择是否遮挡面部，然后保存下载。</p></div><button id="backToEdit" type="button" class="secondary">返回修改</button></div>
